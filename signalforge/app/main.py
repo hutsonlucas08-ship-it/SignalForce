@@ -11,6 +11,7 @@ from .auth import Principal, RateLimiter, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from .risk import RiskSnapshot, assess_risk
+from .research import analyze_asset, scan_assets
 
 log = logging.getLogger("signalforge")
 
@@ -133,7 +134,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         _: Principal = Depends(require_read),
     ):
         """Explainable heuristic screening; never emits an execution instruction."""
-        return assess_risk(RiskSnapshot(**body.dict()))
+        return assess_risk(RiskSnapshot(**body.model_dump()))
+
+    @app.get("/v1/research/assets")
+    def research_assets(
+        limit: int = 50,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 200")
+        return {"assets": scan_assets(conn, limit)}
+
+    @app.get("/v1/research/assets/{asset_id}/analysis")
+    def asset_analysis(
+        asset_id: str,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        if not asset_id.strip() or len(asset_id) > 128:
+            raise HTTPException(status_code=422, detail="Invalid asset ID")
+        return analyze_asset(conn, asset_id, settings.stale_after_seconds)
 
     @app.get("/v1/control/halt")
     def get_halt(_: Principal = Depends(require_read), conn=Depends(get_conn)):
