@@ -133,7 +133,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         _: Principal = Depends(require_read),
     ):
         """Explainable heuristic screening; never emits an execution instruction."""
-        return assess_risk(RiskSnapshot(**body.model_dump()))
+        return assess_risk(RiskSnapshot(**body.dict()))
 
     @app.get("/v1/control/halt")
     def get_halt(_: Principal = Depends(require_read), conn=Depends(get_conn)):
