@@ -11,7 +11,7 @@ from .auth import Principal, RateLimiter, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from .risk import RiskSnapshot, assess_risk
-from .research import analyze_asset, scan_assets
+from .research import analyze_asset, build_brain_report, scan_assets
 
 log = logging.getLogger("signalforge")
 
@@ -156,7 +156,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="Invalid asset ID")
         return analyze_asset(conn, asset_id, settings.stale_after_seconds)
 
-    @app.get("/v1/control/halt")
+    @app.get("/v1/research/assets/{asset_id}/report")\n    def brain_report(\n        asset_id: str,\n        _: Principal = Depends(require_read),\n        conn=Depends(get_conn),\n    ):\n        """Return a deterministic, evidence-grounded research report."""\n        if not asset_id.strip() or len(asset_id) > 128:\n            raise HTTPException(status_code=422, detail="Invalid asset ID")\n        return build_brain_report(conn, asset_id, settings.stale_after_seconds)\n\n    @app.get("/v1/control/halt")
     def get_halt(_: Principal = Depends(require_read), conn=Depends(get_conn)):
         return store.get_halt(conn)
 
