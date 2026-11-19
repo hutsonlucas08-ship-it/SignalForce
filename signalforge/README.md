@@ -19,7 +19,7 @@ uvicorn app.main:app_factory --factory --port 8000
 Check it: `curl localhost:8000/health`, then open http://localhost:8000/docs.
 
 ## Test
-`python -m pytest -q`  (15 tests)
+`python -m pytest -q`
 
 ## Endpoints
 | Endpoint | Key needed | Purpose |
@@ -34,5 +34,5 @@ Check it: `curl localhost:8000/health`, then open http://localhost:8000/docs.
 Give Grok only a **read** key. Keep the **admin** key to yourself.
 
 ## Not done yet (later stages)
-Data collectors, analysis, shadow-trade engine, dashboard, Telegram, Grok connection, cloud deployment, backups.
+Live data collector orchestration, richer analysis, shadow-trade analytics, dashboard, Telegram alerts, Grok connection, cloud deployment, backups.
 Database is SQLite for now; Stage 8 decides whether to move to Postgres for cloud hosting.
