@@ -39,3 +39,8 @@ Give Grok only a **read** key. Keep the **admin** key to yourself.
 ## Not done yet (later stages)
 Live data collector orchestration, richer analysis, shadow-trade analytics, dashboard, Telegram alerts, Grok connection, cloud deployment, backups.
 Database is SQLite for now; Stage 8 decides whether to move to Postgres for cloud hosting.
+
+
+### Brain research report
+
+- `GET /v1/research/assets/{asset_id}/report` — combines the Analyst evidence summary with conservative risk-screen status and explicit limitations. Version 1 is deterministic; it does not invent missing risk data or issue trading instructions.
