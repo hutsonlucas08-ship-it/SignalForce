@@ -90,3 +90,39 @@ def analyze_asset(
         "flags": flags,
         "note": "Evidence summary only; source count does not establish source independence or asset safety.",
     }
+
+
+def build_brain_report(conn, asset_id: str, stale_after_seconds: int = 300) -> dict:
+    """Compose a deterministic, explainable research report from stored evidence."""
+    from .risk import RiskSnapshot, assess_risk
+
+    analysis = analyze_asset(conn, asset_id, stale_after_seconds)
+    risk = assess_risk(RiskSnapshot())
+
+    if analysis["status"] == "NO_DATA":
+        summary = "No observations are available. There is not enough evidence to assess this asset."
+        conclusion = "INSUFFICIENT_EVIDENCE"
+    elif analysis["status"] == "STALE":
+        summary = "Observations exist, but the latest collected data is stale."
+        conclusion = "DATA_REVIEW_REQUIRED"
+    elif analysis["source_count"] < 2:
+        summary = "Observations exist, but evidence currently comes from only one source."
+        conclusion = "LIMITED_EVIDENCE"
+    else:
+        summary = "Observations from multiple named sources are recorded; this does not establish source independence."
+        conclusion = "EVIDENCE_AVAILABLE"
+
+    return {
+        "asset_id": asset_id,
+        "report_type": "deterministic_research_summary",
+        "conclusion": conclusion,
+        "executive_summary": summary,
+        "evidence": analysis,
+        "risk_screen": risk,
+        "limitations": [
+            "This report summarizes stored observations; it does not verify claims made by data providers.",
+            "Multiple source names do not prove independent data or corroboration.",
+            "Risk screening is INSUFFICIENT_DATA until the required on-chain risk fields are collected.",
+            "This is research only, not a buy/sell recommendation or execution instruction.",
+        ],
+    }
