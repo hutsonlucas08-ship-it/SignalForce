@@ -28,6 +28,9 @@ Check it: `curl localhost:8000/health`, then open http://localhost:8000/docs.
 | GET /v1/system/health | read | DB, halt flag, source problems, last data time |
 | GET /v1/system/sources | read | each data source with ok / stale / failing / unknown |
 | GET /v1/system/events | read | recent system events |
+| POST /v1/research/risk-screen | read | explainable, fail-closed token risk screening (not a trade signal) |
+| GET /v1/research/assets | read | recently observed asset discovery list |
+| GET /v1/research/assets/{asset_id}/analysis | read | evidence freshness, source diversity, and event-kind summary |
 | GET /v1/control/halt | read | kill-switch state |
 | POST /v1/control/halt, /resume | **admin** | kill switch (starts HALTED) |
 
