@@ -10,12 +10,22 @@ from . import store
 from .auth import Principal, RateLimiter, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
+from .risk import RiskSnapshot, assess_risk
 
 log = logging.getLogger("signalforge")
 
 
 class HaltRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=200)
+
+
+class RiskScreenRequest(BaseModel):
+    liquidity_usd: Optional[float] = Field(default=None, ge=0)
+    top_10_holder_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    mint_authority_active: Optional[bool] = None
+    freeze_authority_active: Optional[bool] = None
+    data_age_seconds: Optional[float] = Field(default=None, ge=0)
+    metadata_mutable: Optional[bool] = None
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -116,6 +126,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "offset": offset,
             "count": len(records),
         }
+
+    @app.post("/v1/research/risk-screen")
+    def risk_screen(
+        body: RiskScreenRequest,
+        _: Principal = Depends(require_read),
+    ):
+        """Explainable heuristic screening; never emits an execution instruction."""
+        return assess_risk(RiskSnapshot(**body.model_dump()))
 
     @app.get("/v1/control/halt")
     def get_halt(_: Principal = Depends(require_read), conn=Depends(get_conn)):
