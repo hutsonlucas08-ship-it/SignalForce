@@ -51,6 +51,11 @@ class PaperBotConfigRequest(BaseModel):
     duration_seconds: Optional[int] = None
 
 
+class WalletWatchRequest(BaseModel):
+    wallet_address: str = Field(min_length=32, max_length=44)
+    label: Optional[str] = Field(default=None, max_length=80)
+
+
 class RiskScreenRequest(BaseModel):
     liquidity_usd: Optional[float] = Field(default=None, ge=0)
     top_10_holder_pct: Optional[float] = Field(default=None, ge=0, le=100)
@@ -479,6 +484,56 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "rejected": rejected, "source": "Pump.fun trending + newest callouts (when API key configured), PumpPortal launches, and DexScreener market data",
                 "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
                 "note": "Coverage expands with an approved Pump.fun API key; otherwise this scans PumpPortal-discovered assets only. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
+
+    @app.get("/v1/copytraders/wallets")
+    def tracked_wallets(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        rows = conn.execute("SELECT * FROM tracked_wallets ORDER BY added_at DESC").fetchall()
+        return {"wallets": [dict(row) for row in rows], "provider_configured": bool(os.getenv("HELIUS_API_KEY"))}
+
+    @app.post("/v1/copytraders/wallets")
+    def add_tracked_wallet(body: WalletWatchRequest, _: Principal = Depends(require_read), conn=Depends(get_conn)):
+        import re
+        address = body.wallet_address.strip()
+        if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
+            raise HTTPException(status_code=422, detail="Enter a valid-looking Solana public wallet address")
+        conn.execute("INSERT OR IGNORE INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+                     (address, body.label or address[:6]+"…"+address[-4:], utcnow()))
+        conn.commit()
+        return {"added": True, "wallet_address": address, "label": body.label or address[:6]+"…"+address[-4:]}
+
+    @app.get("/v1/copytraders/activity")
+    async def tracked_wallet_activity(wallet: str, _: Principal = Depends(require_read), conn=Depends(get_conn)):
+        import re
+        if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", wallet):
+            raise HTTPException(status_code=422, detail="Invalid Solana wallet address")
+        tracked = conn.execute("SELECT * FROM tracked_wallets WHERE wallet_address=?", (wallet,)).fetchone()
+        if not tracked:
+            raise HTTPException(status_code=404, detail="Wallet is not on your watchlist")
+        key = os.getenv("HELIUS_API_KEY")
+        if not key:
+            return {"configured": False, "transactions": [],
+                    "note": "Set HELIUS_API_KEY as a server-side secret to retrieve parsed wallet activity."}
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(
+                    "https://api-mainnet.helius-rpc.com/v0/addresses/"+wallet+"/transactions",
+                    params={"api-key":key,"limit":20,"sort-order":"desc","type":"SWAP","token-accounts":"balanceChanged"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            rows = payload if isinstance(payload,list) else []
+            transactions = [{"signature":x.get("signature"),"timestamp":x.get("timestamp"),
+                             "description":x.get("description"),"type":x.get("type"),
+                             "source":x.get("source"),"token_transfers":x.get("tokenTransfers") or [],
+                             "native_transfers":x.get("nativeTransfers") or []} for x in rows]
+            if rows:
+                conn.execute("UPDATE tracked_wallets SET last_signature=?,last_seen_at=? WHERE wallet_address=?",
+                             (rows[0].get("signature"),utcnow(),wallet))
+                conn.commit()
+            return {"configured":True,"wallet":wallet,"transactions":transactions,
+                    "note":"Parsed public on-chain swap history. This is not a verified profit leaderboard; token price history and complete position accounting are required before ranking wallet performance."}
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Helius wallet history is temporarily unavailable")
 
     @app.get("/v1/telegram/status")
     def telegram_status(_: Principal = Depends(require_read)):
