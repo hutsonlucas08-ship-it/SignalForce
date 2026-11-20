@@ -285,6 +285,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "market_cap_usd": pair.get("marketCap"),
                         "fdv_usd": pair.get("fdv"),
                         "price_usd": pair.get("priceUsd"),
+                        "image_url": ((pair.get("info") or {}).get("imageUrl") if isinstance(pair.get("info"), dict) else None),
                         "liquidity_usd": liquidity.get("usd"),
                         "volume_24h_usd": volume.get("h24"),
                         "buys_24h": (txns.get("h24") or {}).get("buys"),
