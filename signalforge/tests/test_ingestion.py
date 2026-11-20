@@ -88,3 +88,38 @@ def test_migration_message_without_type_is_classified_as_migration(ingestion_db)
     ).fetchone()
 
     assert tuple(row) == ("MIGRATED123", "migration")
+
+
+def test_subscription_acknowledgement_is_ignored_without_failure(ingestion_db):
+    result = process_message(
+        ingestion_db,
+        "pumpportal",
+        json.dumps({"message": "Successfully subscribed to new token events"}),
+    )
+
+    assert result is None
+    assert ingestion_db.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 0
+    row = ingestion_db.execute(
+        "SELECT consecutive_failures, last_error FROM data_sources WHERE name = ?",
+        ("pumpportal",),
+    ).fetchone()
+    assert row["consecutive_failures"] == 0
+    assert row["last_error"] is None
+
+
+def test_successful_ingestion_clears_previous_source_error(ingestion_db):
+    from app.store import record_source_failure
+
+    record_source_failure(ingestion_db, "pumpportal", "temporary error")
+    process_message(
+        ingestion_db,
+        "pumpportal",
+        json.dumps({"mint": "RECOVERED123", "txType": "create"}),
+    )
+
+    row = ingestion_db.execute(
+        "SELECT consecutive_failures, last_error FROM data_sources WHERE name = ?",
+        ("pumpportal",),
+    ).fetchone()
+    assert row["consecutive_failures"] == 0
+    assert row["last_error"] is None
