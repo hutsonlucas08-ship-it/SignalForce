@@ -37,7 +37,7 @@ def overview(conn):
             "return_pct":round((equity/account["starting_balance"]-1)*100,3),
             "closed_trades":realized["n"],"win_rate_pct":round(wins/realized["n"]*100,2) if realized["n"] else None,
             "open_positions":len(positions),"positions":positions,
-            "risk_limits":{"max_position_pct_equity":5,"max_open_positions":10,"fee_pct":0.5,"slippage_bps":50}})
+            "risk_limits":{"max_position_pct_equity":5,"max_open_positions":10,"daily_realized_loss_limit_pct":5,"fee_pct":0.5,"slippage_bps":50}})
     return {"starting_balance_per_strategy":STARTING_BALANCE,"accounts":accounts,
         "note":"Paper simulation only; performance depends on supplied market-price snapshots."}
 
@@ -66,6 +66,9 @@ def place_order(conn, strategy, asset_id, token_name, side, amount_usd, referenc
         equity=account["cash_balance"]+conn.execute("SELECT COALESCE(SUM(last_price*quantity),0) v FROM paper_positions WHERE account_id=?",(aid,)).fetchone()["v"]
         if amount_usd>account["cash_balance"]: raise ValueError("Insufficient virtual cash")
         if amount_usd>equity*MAX_POSITION_FRACTION: raise ValueError("Order exceeds the 5% of equity position limit")
+        today=now[:10]
+        daily=conn.execute("SELECT COALESCE(SUM(realized_pnl_usd),0) v FROM paper_trades WHERE account_id=? AND side='sell' AND substr(created_at,1,10)=?",(aid,today)).fetchone()["v"]
+        if daily <= -account["starting_balance"]*0.05: raise ValueError("Daily realized-loss limit reached; new paper entries are paused")
         count=conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?",(aid,)).fetchone()["n"]
         if pos is None and count>=MAX_OPEN_POSITIONS: raise ValueError("Maximum of 10 open positions reached")
         qty=(amount_usd-fee)/fill
