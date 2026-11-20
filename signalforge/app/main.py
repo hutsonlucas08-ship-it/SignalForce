@@ -1,4 +1,5 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
+import asyncio
 import json
 import logging
 import time
@@ -18,7 +19,7 @@ from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper
+from . import paper, paper_bot
 
 log = logging.getLogger("signalforge")
 _price_history = {}
@@ -43,6 +44,11 @@ class PaperMarkRequest(BaseModel):
     prices: dict[str, float]
 
 
+class PaperBotConfigRequest(BaseModel):
+    enabled: Optional[bool] = None
+    allocated_capital_usd: Optional[float] = Field(default=None, ge=100, le=100000)
+
+
 class RiskScreenRequest(BaseModel):
     liquidity_usd: Optional[float] = Field(default=None, ge=0)
     top_10_holder_pct: Optional[float] = Field(default=None, ge=0, le=100)
@@ -57,6 +63,25 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app = FastAPI(title="SignalForge Core", version=settings.version)
     app.state.settings = settings
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
+    app.state.paper_bot_stop = asyncio.Event()
+    app.state.paper_bot_task = None
+
+    @app.on_event("startup")
+    async def start_paper_bot():
+        if settings.db_path != ":memory:":
+            app.state.paper_bot_task = asyncio.create_task(
+                paper_bot.run_paper_bot(settings.db_path, app.state.paper_bot_stop)
+            )
+
+    @app.on_event("shutdown")
+    async def stop_paper_bot():
+        app.state.paper_bot_stop.set()
+        task = app.state.paper_bot_task
+        if task is not None:
+            try:
+                await asyncio.wait_for(task, timeout=6)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
 
     # One shared connection for ":memory:" (tests); a fresh connection per request otherwise.
     shared = connect(settings.db_path) if settings.db_path == ":memory:" else None
@@ -292,6 +317,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "image_url": ((pair.get("info") or {}).get("imageUrl") if isinstance(pair.get("info"), dict) else None),
                         "liquidity_usd": liquidity.get("usd"),
                         "volume_24h_usd": volume.get("h24"),
+                        "buys_5m": (txns.get("m5") or {}).get("buys"),
+                        "sells_5m": (txns.get("m5") or {}).get("sells"),
+                        "volume_5m_usd": volume.get("m5"),
+                        "buys_1h": (txns.get("h1") or {}).get("buys"),
+                        "sells_1h": (txns.get("h1") or {}).get("sells"),
+                        "volume_1h_usd": volume.get("h1"),
+                        "price_change_5m_pct": price_change.get("m5"),
                         "buys_24h": (txns.get("h24") or {}).get("buys"),
                         "sells_24h": (txns.get("h24") or {}).get("sells"),
                         "price_change_1h_pct": price_change.get("h1"),
@@ -384,6 +416,49 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="Invalid asset ID")
         return build_brain_report(conn, asset_id, settings.stale_after_seconds)
 
+
+    @app.get("/v1/research/trending-now")
+    async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        assets = scan_assets(conn, 50)
+        mints = [a["asset_id"] for a in assets if a.get("asset_id")]
+        if not mints:
+            return {"candidates": [], "scanned": 0, "note": "No discovered assets yet. Keep the PumpPortal collector running."}
+        async with httpx.AsyncClient(timeout=3.5) as client:
+            pairs = await paper_bot._fetch_pairs(client, mints)
+        names = {a["asset_id"]: a.get("token_name") for a in assets}
+        candidates, rejected = [], 0
+        for mint, pair in pairs.items():
+            score, reason = paper_bot._score(pair)
+            if score is None:
+                rejected += 1
+                continue
+            base = pair.get("baseToken") or {}
+            candidates.append({
+                "asset_id": mint, "name": names.get(mint) or base.get("name") or mint[:8],
+                "symbol": base.get("symbol"), "score": score,
+                "price_usd": pair.get("priceUsd"), "market_cap_usd": pair.get("marketCap") or pair.get("fdv"),
+                "liquidity_usd": (pair.get("liquidity") or {}).get("usd"),
+                "volume_5m_usd": (pair.get("volume") or {}).get("m5"),
+                "buys_5m": ((pair.get("txns") or {}).get("m5") or {}).get("buys"),
+                "sells_5m": ((pair.get("txns") or {}).get("m5") or {}).get("sells"),
+                "price_change_5m_pct": ((pair.get("priceChange") or {}).get("m5")),
+                "source": "DexScreener",
+            })
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return {"candidates": candidates[:20], "scanned": len(mints), "priced": len(pairs),
+                "rejected": rejected, "source": "DexScreener snapshots for PumpPortal-discovered assets",
+                "note": "Not the full Pump.fun market. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
+
+    @app.get("/v1/paper/bot")
+    def paper_bot_status(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        return paper_bot.bot_status(conn)
+
+    @app.post("/v1/paper/bot/config")
+    def paper_bot_config(body: PaperBotConfigRequest, _: Principal = Depends(require_read), conn=Depends(get_conn)):
+        try:
+            return paper_bot.configure_bot(conn, body.enabled, body.allocated_capital_usd)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     @app.get("/v1/paper/overview")
     def paper_overview(_: Principal = Depends(require_read), conn=Depends(get_conn)):
