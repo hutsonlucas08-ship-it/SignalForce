@@ -82,6 +82,19 @@ def test_analyze_asset_extracts_only_explicit_provider_fields(tmp_path):
         conn.close()
 
 
+def test_scan_assets_captures_original_metadata_uri(tmp_path):
+    conn = seeded_db(tmp_path)
+    try:
+        add_observation(
+            conn, "feed_a", "META1", "create",
+            '{"name":"Metadata Token","uri":"https://ipfs.io/ipfs/QmExample"}',
+        )
+        assets = {item["asset_id"]: item for item in scan_assets(conn)}
+        assert assets["META1"]["metadata_uri"] == "https://ipfs.io/ipfs/QmExample"
+    finally:
+        conn.close()
+
+
 def test_scan_and_analysis_expose_only_https_image_urls(tmp_path):
     conn = seeded_db(tmp_path)
     try:
