@@ -57,8 +57,7 @@ def test_build_ws_url_encodes_api_key():
     )
 
 
-@pytest.mark.asyncio
-async def test_collector_subscribes_to_free_streams_and_stores_event(collector_db):
+def test_collector_subscribes_to_free_streams_and_stores_event(collector_db):
     stop_event = asyncio.Event()
     socket = FakeSocket([
         json.dumps({
@@ -75,12 +74,12 @@ async def test_collector_subscribes_to_free_streams_and_stores_event(collector_d
         calls.append((url, kwargs))
         return socket
 
-    await run_pumpportal_collector(
+    asyncio.run(run_pumpportal_collector(
         collector_db,
         url="wss://example.test/feed",
         connect=fake_connect,
         stop_event=stop_event,
-    )
+    ))
 
     assert calls[0][0] == "wss://example.test/feed"
     assert socket.sent == [
@@ -93,16 +92,15 @@ async def test_collector_subscribes_to_free_streams_and_stores_event(collector_d
     assert tuple(row) == ("NEW_TOKEN_123", "create")
 
 
-@pytest.mark.asyncio
-async def test_collector_registers_source_and_stops_cleanly(collector_db):
+def test_collector_registers_source_and_stops_cleanly(collector_db):
     stop_event = asyncio.Event()
     stop_event.set()
 
-    await run_pumpportal_collector(
+    asyncio.run(run_pumpportal_collector(
         collector_db,
         connect=lambda *_args, **_kwargs: pytest.fail("must not connect when stopped"),
         stop_event=stop_event,
-    )
+    ))
 
     row = collector_db.execute(
         "SELECT name, kind FROM data_sources WHERE name = 'pumpportal'"
