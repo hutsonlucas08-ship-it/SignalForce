@@ -154,3 +154,45 @@ def test_dashboard_is_served_at_root():
     assert response.status_code == 200
     assert "SignalForge" in response.text
     assert "Token Scanner" in response.text
+
+
+def test_paper_accounts_start_with_separate_persistent_balances():
+    c, _ = make_client()
+    response = c.get("/v1/paper/overview", headers=h(READ))
+    assert response.status_code == 200
+    accounts = response.json()["accounts"]
+    assert [a["strategy"] for a in accounts] == ["automatic", "approval"]
+    assert all(a["starting_balance"] == 10000 for a in accounts)
+    assert all(a["cash_balance"] == 10000 for a in accounts)
+    assert all(a["mode"] == "paper" for a in accounts)
+
+
+def test_paper_order_persists_and_enforces_position_limit():
+    c, _ = make_client()
+    too_large = {"strategy":"approval","asset_id":"MintABC","token_name":"Demo","side":"buy",
+                 "amount_usd":600,"reference_price":0.01,"reason":"test"}
+    assert c.post("/v1/paper/orders", headers=h(READ), json=too_large).status_code == 422
+    order = dict(too_large, amount_usd=250)
+    placed = c.post("/v1/paper/orders", headers=h(READ), json=order)
+    assert placed.status_code == 200
+    assert placed.json()["mode"] == "paper"
+    assert placed.json()["fill_price"] > placed.json()["reference_price"]
+    overview = c.get("/v1/paper/overview", headers=h(READ)).json()["accounts"]
+    approval = next(a for a in overview if a["strategy"] == "approval")
+    automatic = next(a for a in overview if a["strategy"] == "automatic")
+    assert approval["cash_balance"] == 9750
+    assert approval["open_positions"] == 1
+    assert automatic["cash_balance"] == 10000
+    assert c.get("/v1/paper/activity?strategy=approval", headers=h(READ)).json()["activity"]
+
+
+def test_paper_sell_records_realized_result_and_never_live_mode():
+    c, _ = make_client()
+    base = {"strategy":"automatic","asset_id":"MintXYZ","token_name":"Demo","side":"buy",
+            "amount_usd":200,"reference_price":0.02,"reason":"entry"}
+    assert c.post("/v1/paper/orders", headers=h(READ), json=base).status_code == 200
+    sell = dict(base, side="sell", amount_usd=100, reference_price=0.025, reason="exit")
+    result = c.post("/v1/paper/orders", headers=h(READ), json=sell)
+    assert result.status_code == 200
+    assert result.json()["realized_pnl_usd"] > 0
+    assert result.json()["mode"] == "paper"
