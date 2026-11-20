@@ -445,11 +445,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
         assets = scan_assets(conn, 50)
         mints = [a["asset_id"] for a in assets if a.get("asset_id")]
-        if not mints:
-            return {"candidates": [], "scanned": 0, "note": "No discovered assets yet. Keep the PumpPortal collector running."}
         async with httpx.AsyncClient(timeout=3.5) as client:
-            pairs = await paper_bot._fetch_pairs(client, mints)
+            pump_mints, pump_names = await paper_bot._pumpfun_discoveries(client)
+            for mint in pump_mints:
+                if mint not in mints:
+                    mints.append(mint)
+            pairs = await paper_bot._fetch_pairs(client, mints) if mints else {}
         names = {a["asset_id"]: a.get("token_name") for a in assets}
+        names.update(pump_names)
+        if not mints:
+            return {"candidates": [], "scanned": 0, "note": "No PumpPortal assets or Pump.fun feed candidates yet."}
         candidates, rejected = [], 0
         for mint, pair in pairs.items():
             score, reason = paper_bot._score(pair)
@@ -470,8 +475,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             })
         candidates.sort(key=lambda x: x["score"], reverse=True)
         return {"candidates": candidates[:20], "scanned": len(mints), "priced": len(pairs),
-                "rejected": rejected, "source": "DexScreener snapshots for PumpPortal-discovered assets",
-                "note": "Not the full Pump.fun market. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
+                "rejected": rejected, "source": "Pump.fun trending + newest callouts (when API key configured), PumpPortal launches, and DexScreener market data",
+                "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
+                "note": "Coverage expands with an approved Pump.fun API key; otherwise this scans PumpPortal-discovered assets only. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
 
     @app.get("/v1/paper/bot")
     def paper_bot_status(_: Principal = Depends(require_read), conn=Depends(get_conn)):
