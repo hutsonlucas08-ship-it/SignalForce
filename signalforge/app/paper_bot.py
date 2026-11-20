@@ -200,6 +200,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
     paper.mark_positions(conn, prices)
 
     # Exit management runs before any new entries.
+    exits = []
     for mint, pos in list(positions.items()):
         price = prices.get(mint)
         if not price:
@@ -208,8 +209,9 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
         if pnl_pct <= STOP_LOSS_PCT or pnl_pct >= TAKE_PROFIT_PCT:
             reason = "Automatic paper exit: stop loss" if pnl_pct <= STOP_LOSS_PCT else "Automatic paper exit: take profit"
             try:
-                paper.place_order(conn, "automatic", mint, pos["token_name"], "sell",
+                sold = paper.place_order(conn, "automatic", mint, pos["token_name"], "sell",
                                   pos["quantity"] * price, price, reason)
+                exits.append({"asset_id": mint, "token_name": pos["token_name"], "realized_pnl_usd": sold["realized_pnl_usd"], "reference_price": price})
             except ValueError as exc:
                 log.warning("Paper exit blocked for %s: %s", mint[:8], exc)
 
@@ -248,7 +250,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             break
         except ValueError as exc:
             log.info("Candidate skipped %s: %s", mint[:8], exc)
-    return {"prices": prices, "candidate_count": len(candidates), "entries": entries}
+    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits}
 
 
 async def _bubble_approved(client, mint):
@@ -288,6 +290,23 @@ async def _approved_candidates(client, pairs):
     return {mint for (_,mint), ok in zip(checks, results) if ok}
 
 
+async def _telegram_send(client, text):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    try:
+        response = await client.post(
+            "https://api.telegram.org/bot" + token + "/sendMessage",
+            json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+        )
+        response.raise_for_status()
+        if not response.json().get("ok"):
+            log.warning("Telegram paper alert was not accepted")
+    except (httpx.HTTPError, ValueError):
+        log.warning("Telegram paper alert delivery failed")
+
+
 async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
     """Run while the API process is alive; SQLite lease prevents duplicate workers."""
     conn = connect(db_path)
@@ -317,6 +336,12 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                         pairs = await _fetch_pairs(client, mints) if mints else {}
                         approved_mints = await _approved_candidates(client, pairs)
                         outcome = _trade_decisions(conn, assets, pairs, pump_names, approved_mints)
+                        for trade in outcome.get("entries", []):
+                            pair = pairs.get(trade["asset_id"], {})
+                            token = (pair.get("baseToken") or {}).get("name") or pump_names.get(trade["asset_id"]) or trade["asset_id"][:8]
+                            await _telegram_send(client, "SIGNALFORGE PAPER BUY\\n" + token + "\\nEntry: $" + str(pair.get("priceUsd") or "n/a") + "\\nScore: " + str(trade["score"]) + "/100\\nNo real funds moved.")
+                        for trade in outcome.get("exits", []):
+                            await _telegram_send(client, "SIGNALFORGE PAPER SELL\\n" + str(trade.get("token_name") or trade["asset_id"][:8]) + "\\nExit reference: $" + str(trade["reference_price"]) + "\\nRealized paper P&L: $" + str(round(trade["realized_pnl_usd"],2)) + "\\nNo real funds moved.")
                         _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=None)
                         log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d",
                                  len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]))
