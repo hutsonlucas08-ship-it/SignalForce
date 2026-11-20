@@ -59,6 +59,21 @@ The PumpPortal collector still runs in a second terminal as described above; it 
 new-token and migration discoveries. The bot can remain ACTIVE while making zero
 trades if no token passes every filter. It stops when the API server stops or sleeps.
 
+## Public trader tracking and private Telegram alerts
+
+SignalForge can store public Solana wallet addresses in a watchlist and retrieve parsed
+swap history through Helius. Add `HELIUS_API_KEY` to the server-side environment to
+enable history retrieval. This currently provides on-chain activity, not a verified
+profit leaderboard or automatic wallet-mirroring strategy; accurate trader P&L requires
+position reconstruction, historical pricing, token decimals, transfers, and realized
+exit accounting. Do not treat raw wallet activity as proof of trading skill.
+
+Private Telegram notifications use a bot created through https://t.me/BotFather.
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as server-side secrets. The dashboard
+can send a test alert, and the paper worker sends simulated entry/exit alerts. Never
+place bot credentials in frontend code or commit them to Git. For a private chat, open
+the newly created bot in Telegram and press Start before testing delivery.
+
 ## Test
 `python -m pytest -q`
 
