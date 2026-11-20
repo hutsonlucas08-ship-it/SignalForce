@@ -82,9 +82,12 @@ def _score(pair):
     vol5, vol1 = volume.get("m5"), volume.get("h1")
     change5, change1 = changes.get("m5"), changes.get("h1")
     market_cap = pair.get("marketCap") or pair.get("fdv")
-    price = pair.get("priceUsd")
+    try:
+        price = float(pair.get("priceUsd"))
+    except (TypeError, ValueError):
+        price = 0.0
     checks = [
-        (isinstance(price, (int,float)) and price > 0, "No current price"),
+        (price > 0, "No current price"),
         (isinstance(liquidity, (int,float)) and liquidity >= MIN_LIQUIDITY_USD, "Liquidity below $15,000 or missing"),
         (isinstance(market_cap, (int,float)) and MIN_MARKET_CAP_USD <= market_cap <= MAX_MARKET_CAP_USD, "Outside configured market-cap range"),
         (isinstance(vol5, (int,float)) and vol5 >= MIN_VOLUME_5M_USD, "Five-minute volume too low or missing"),
