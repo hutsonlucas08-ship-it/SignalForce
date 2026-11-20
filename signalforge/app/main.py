@@ -274,6 +274,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         "volume_24h_usd": volume.get("h24"),
                         "buys_24h": (txns.get("h24") or {}).get("buys"),
                         "sells_24h": (txns.get("h24") or {}).get("sells"),
+                        "price_change_1h_pct": price_change.get("h1"),
                         "price_change_24h_pct": price_change.get("h24"),
                         "observed_at": utcnow(),
                         "source": "DexScreener",
