@@ -1,7 +1,18 @@
 """Read-only discovery and analysis over persisted market observations."""
 
+import json
+import math
 from datetime import datetime, timezone
 from typing import Optional
+
+
+_METADATA_FIELDS = ("name", "symbol", "uri", "pool")
+_METRIC_FIELDS = (
+    "marketCapSol",
+    "vSolInBondingCurve",
+    "vTokensInBondingCurve",
+    "initialBuy",
+)
 
 
 def scan_assets(conn, limit: int = 50) -> list[dict]:
@@ -30,10 +41,10 @@ def analyze_asset(
     stale_after_seconds: int = 300,
     now: Optional[datetime] = None,
 ) -> dict:
-    """Summarize evidence volume, source diversity, and freshness for one asset."""
+    """Summarize evidence, extract explicitly observed token fields, and check freshness."""
     rows = conn.execute(
         """
-        SELECT source, kind, observed_at, collected_at
+        SELECT source, kind, payload, observed_at, collected_at
         FROM observations
         WHERE asset_id = ?
         ORDER BY id DESC
@@ -52,6 +63,9 @@ def analyze_asset(
             "kind_counts": {},
             "latest_collected_at": None,
             "age_seconds": None,
+            "token_metadata": {},
+            "observed_metrics": {},
+            "payload_fields": [],
             "flags": ["no_observations"],
         }
 
@@ -67,8 +81,39 @@ def analyze_asset(
 
     sources = sorted({row["source"] for row in rows})
     kind_counts = {}
+    token_metadata = {}
+    observed_metrics = {}
+    payload_fields = set()
+
+    # Rows are newest first. Keep the newest valid value for each recognized field.
     for row in rows:
         kind_counts[row["kind"]] = kind_counts.get(row["kind"], 0) + 1
+        try:
+            payload = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        payload_fields.update(key for key in payload if isinstance(key, str))
+        for field in _METADATA_FIELDS:
+            value = payload.get(field)
+            if field not in token_metadata and isinstance(value, str) and value.strip():
+                token_metadata[field] = value.strip()[:256]
+        for field in _METRIC_FIELDS:
+            value = payload.get(field)
+            if (
+                field not in observed_metrics
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            ):
+                observed_metrics[field] = {
+                    "value": value,
+                    "source": row["source"],
+                    "kind": row["kind"],
+                    "observed_at": row["observed_at"],
+                }
 
     flags = []
     if len(sources) < 2:
@@ -87,8 +132,14 @@ def analyze_asset(
         "kind_counts": kind_counts,
         "latest_collected_at": latest,
         "age_seconds": age_seconds,
+        "token_metadata": token_metadata,
+        "observed_metrics": observed_metrics,
+        "payload_fields": sorted(payload_fields),
         "flags": flags,
-        "note": "Evidence summary only; source count does not establish source independence or asset safety.",
+        "note": (
+            "Extracted values are provider-reported observations, not independently verified. "
+            "Source count does not establish source independence or asset safety."
+        ),
     }
 
 
@@ -123,6 +174,7 @@ def build_brain_report(conn, asset_id: str, stale_after_seconds: int = 300) -> d
             "This report summarizes stored observations; it does not verify claims made by data providers.",
             "Multiple source names do not prove independent data or corroboration.",
             "Risk screening is INSUFFICIENT_DATA until the required on-chain risk fields are collected.",
+            "Provider-reported market metrics are not equivalent to independently verified liquidity or holder-distribution data.",
             "This is research only, not a buy/sell recommendation or execution instruction.",
         ],
     }
