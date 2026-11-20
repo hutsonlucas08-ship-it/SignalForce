@@ -203,8 +203,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
     conn = connect(db_path)
     try:
         _state(conn)
-        if not conn.execute("SELECT started_at FROM paper_bot_state WHERE id=1").fetchone()["started_at"]:
-            _set_status(conn, started_at=utcnow())
+        _set_status(conn, started_at=utcnow())
         async with httpx.AsyncClient(timeout=3.5, headers={"Accept":"application/json"}) as client:
             while not stop_event.is_set():
                 try:
