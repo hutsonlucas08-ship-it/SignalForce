@@ -7,6 +7,17 @@ from typing import Optional
 
 
 _METADATA_FIELDS = ("name", "symbol", "uri", "pool")
+_IMAGE_FIELDS = ("image", "imageUri", "image_uri", "imageUrl", "image_url", "tokenImage", "token_image")
+
+
+def _safe_image_url(value):
+    """Accept only absolute HTTPS image URLs from provider metadata."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if len(value) > 2048 or not value.startswith("https://"):
+        return None
+    return value
 _METRIC_FIELDS = (
     "marketCapSol",
     "vSolInBondingCurve",
@@ -32,7 +43,27 @@ def scan_assets(conn, limit: int = 50) -> list[dict]:
         """,
         (limit,),
     )
-    return [dict(row) for row in rows]
+    assets = [dict(row) for row in rows]
+    for asset in assets:
+        image_rows = conn.execute(
+            "SELECT payload FROM observations WHERE asset_id = ? ORDER BY id DESC LIMIT 200",
+            (asset["asset_id"],),
+        ).fetchall()
+        for image_row in image_rows:
+            try:
+                payload = json.loads(image_row["payload"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(payload, dict):
+                image_url = next(
+                    (_safe_image_url(payload.get(field)) for field in _IMAGE_FIELDS
+                     if _safe_image_url(payload.get(field))),
+                    None,
+                )
+                if image_url:
+                    asset["image_url"] = image_url
+                    break
+    return assets
 
 
 def analyze_asset(
@@ -64,6 +95,7 @@ def analyze_asset(
             "latest_collected_at": None,
             "age_seconds": None,
             "token_metadata": {},
+            "image_url": None,
             "observed_metrics": {},
             "payload_fields": [],
             "flags": ["no_observations"],
@@ -83,6 +115,7 @@ def analyze_asset(
     kind_counts = {}
     token_metadata = {}
     observed_metrics = {}
+    image_url = None
     payload_fields = set()
 
     # Rows are newest first. Keep the newest valid value for each recognized field.
@@ -100,6 +133,12 @@ def analyze_asset(
             value = payload.get(field)
             if field not in token_metadata and isinstance(value, str) and value.strip():
                 token_metadata[field] = value.strip()[:256]
+        if image_url is None:
+            image_url = next(
+                (_safe_image_url(payload.get(field)) for field in _IMAGE_FIELDS
+                 if _safe_image_url(payload.get(field))),
+                None,
+            )
         for field in _METRIC_FIELDS:
             value = payload.get(field)
             if (
@@ -133,6 +172,7 @@ def analyze_asset(
         "latest_collected_at": latest,
         "age_seconds": age_seconds,
         "token_metadata": token_metadata,
+        "image_url": image_url,
         "observed_metrics": observed_metrics,
         "payload_fields": sorted(payload_fields),
         "flags": flags,
