@@ -100,7 +100,9 @@ def test_source_status_unknown_ok_stale_failing():
 def test_migrations_idempotent_and_detect_edits(tmp_path):
     conn = connect(":memory:")
     first = run_migrations(conn)
-    assert first == ["001_init.sql", "002_paper_simulator.sql", "003_paper_bot.sql"] and run_migrations(conn) == []
+    assert first == ["001_init.sql", "002_paper_simulator.sql", "003_paper_bot.sql", "004_timed_paper_sessions.sql"] and run_migrations(conn) == []
+    state = conn.execute("SELECT enabled FROM paper_bot_state WHERE id=1").fetchone()
+    assert state["enabled"] == 0
     d = tmp_path / "m"; d.mkdir()
     (d / "001_a.sql").write_text("CREATE TABLE t (x INTEGER);")
     c2 = connect(":memory:"); run_migrations(c2, d)
