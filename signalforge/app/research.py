@@ -55,6 +55,13 @@ def scan_assets(conn, limit: int = 50) -> list[dict]:
             except (json.JSONDecodeError, TypeError):
                 continue
             if isinstance(payload, dict):
+                if not asset.get("token_name"):
+                    name = payload.get("name")
+                    symbol = payload.get("symbol")
+                    if isinstance(name, str) and name.strip():
+                        asset["token_name"] = name.strip()[:128]
+                    elif isinstance(symbol, str) and symbol.strip():
+                        asset["token_name"] = symbol.strip()[:32]
                 image_url = next(
                     (_safe_image_url(payload.get(field)) for field in _IMAGE_FIELDS
                      if _safe_image_url(payload.get(field))),
