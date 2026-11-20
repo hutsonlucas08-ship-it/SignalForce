@@ -157,6 +157,7 @@ def test_research_endpoints_require_read_key(tmp_path):
     client = TestClient(create_app(settings))
     assert client.get("/v1/research/assets").status_code == 401
     assert client.get("/v1/research/assets/ASSET1/analysis").status_code == 401
+    assert client.get("/v1/research/assets/ASSET1/launch-health").status_code == 401
 
 
 def test_research_endpoints_return_asset_reports(tmp_path):
