@@ -95,3 +95,32 @@ async def run_pumpportal_collector(
         except asyncio.TimeoutError:
             pass
         backoff = min(backoff * 2, max_backoff)
+
+
+
+async def _run_from_environment() -> None:
+    from app.config import load_settings
+    from app.db import connect, run_migrations
+
+    settings = load_settings()
+    conn = connect(settings.db_path)
+    try:
+        run_migrations(conn)
+        await run_pumpportal_collector(conn)
+    finally:
+        conn.close()
+
+
+def main() -> None:
+    """Run with: python -m app.sources.collector (from the signalforge folder)."""
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    try:
+        asyncio.run(_run_from_environment())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
