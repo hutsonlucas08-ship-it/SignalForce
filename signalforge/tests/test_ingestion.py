@@ -73,3 +73,18 @@ def test_invalid_message_records_source_failure(ingestion_db):
     ).fetchone()
 
     assert row["consecutive_failures"] == 1
+
+
+def test_migration_message_without_type_is_classified_as_migration(ingestion_db):
+    observation_id = process_message(
+        ingestion_db,
+        "pumpportal",
+        json.dumps({"mint": "MIGRATED123", "pool": "POOL123"}),
+    )
+
+    row = ingestion_db.execute(
+        "SELECT asset_id, kind FROM observations WHERE id = ?",
+        (observation_id,),
+    ).fetchone()
+
+    assert tuple(row) == ("MIGRATED123", "migration")
