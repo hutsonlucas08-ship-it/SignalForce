@@ -339,9 +339,9 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                         for trade in outcome.get("entries", []):
                             pair = pairs.get(trade["asset_id"], {})
                             token = (pair.get("baseToken") or {}).get("name") or pump_names.get(trade["asset_id"]) or trade["asset_id"][:8]
-                            await _telegram_send(client, "SIGNALFORGE PAPER BUY\\n" + token + "\\nEntry: $" + str(pair.get("priceUsd") or "n/a") + "\\nScore: " + str(trade["score"]) + "/100\\nNo real funds moved.")
+                            await _telegram_send(client, "SIGNALFORGE PAPER BUY\n" + token + "\nEntry: $" + str(pair.get("priceUsd") or "n/a") + "\nScore: " + str(trade["score"]) + "/100\nNo real funds moved.")
                         for trade in outcome.get("exits", []):
-                            await _telegram_send(client, "SIGNALFORGE PAPER SELL\\n" + str(trade.get("token_name") or trade["asset_id"][:8]) + "\\nExit reference: $" + str(trade["reference_price"]) + "\\nRealized paper P&L: $" + str(round(trade["realized_pnl_usd"],2)) + "\\nNo real funds moved.")
+                            await _telegram_send(client, "SIGNALFORGE PAPER SELL\n" + str(trade.get("token_name") or trade["asset_id"][:8]) + "\nExit reference: $" + str(trade["reference_price"]) + "\nRealized paper P&L: $" + str(round(trade["realized_pnl_usd"],2)) + "\nNo real funds moved.")
                         _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=None)
                         log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d",
                                  len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]))
