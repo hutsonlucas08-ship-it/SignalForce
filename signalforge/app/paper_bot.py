@@ -290,6 +290,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
         _set_status(conn, started_at=utcnow())
         async with httpx.AsyncClient(timeout=3.5, headers={"Accept":"application/json"}) as client:
             while not stop_event.is_set():
+                cycle_started = time.monotonic()
                 try:
                     state = _state(conn)
                     _set_status(conn, heartbeat_at=utcnow())
@@ -316,10 +317,12 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                 except Exception as exc:
                     log.exception("Paper bot scan failed")
                     _set_status(conn, heartbeat_at=utcnow(), last_error=str(exc)[:300])
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=INTERVAL_SECONDS)
-                except asyncio.TimeoutError:
-                    pass
+                remaining = max(0.0, INTERVAL_SECONDS - (time.monotonic() - cycle_started))
+                if remaining:
+                    try:
+                        await asyncio.wait_for(stop_event.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        pass
     finally:
         _release(conn)
         conn.close()
