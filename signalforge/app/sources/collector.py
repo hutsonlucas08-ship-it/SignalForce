@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from urllib.parse import urlencode
 
@@ -15,6 +16,7 @@ from app.sources.pumpportal import MAX_MESSAGE_SIZE
 
 SOURCE_NAME = "pumpportal"
 DEFAULT_WS_URL = "wss://pumpportal.fun/api/data"
+logger = logging.getLogger(__name__)
 
 
 def build_ws_url(api_key: str | None = None) -> str:
@@ -57,9 +59,11 @@ async def run_pumpportal_collector(
                 ping_timeout=20,
                 max_size=MAX_MESSAGE_SIZE,
             ) as websocket:
+                logger.info("Connected to PumpPortal; subscribing to new-token and migration events")
                 await websocket.send(json.dumps({"method": "subscribeNewToken"}))
                 await websocket.send(json.dumps({"method": "subscribeMigration"}))
                 store.record_source_success(conn, SOURCE_NAME)
+                logger.info("Subscriptions sent; waiting for token events")
                 backoff = min_backoff
 
                 while not stop_event.is_set():
@@ -72,15 +76,19 @@ async def run_pumpportal_collector(
                         raw = raw.decode("utf-8", errors="replace")
 
                     try:
-                        process_message(conn, SOURCE_NAME, raw)
-                    except (ValueError, UnicodeError):
+                        observation_id = process_message(conn, SOURCE_NAME, raw)
+                        if observation_id is not None:
+                            logger.info("Stored PumpPortal observation id=%s", observation_id)
+                    except (ValueError, UnicodeError) as exc:
                         # Invalid provider frames are counted by ingestion and
                         # must not terminate an otherwise healthy stream.
+                        logger.warning("Ignored invalid PumpPortal frame: %s", exc)
                         continue
 
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            logger.exception("PumpPortal collector connection failed")
             store.record_source_failure(
                 conn,
                 SOURCE_NAME,
