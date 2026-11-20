@@ -15,6 +15,7 @@ from .research import scan_assets
 
 log = logging.getLogger("signalforge.paper_bot")
 OWNER = str(uuid.uuid4())
+_BUBBLE_CACHE = {}
 INTERVAL_SECONDS = 3.0
 LEASE_SECONDS = 12.0
 MIN_LIQUIDITY_USD = 15000.0
@@ -177,7 +178,7 @@ async def _fetch_pairs(client, mints):
     return out
 
 
-def _trade_decisions(conn, assets, pairs, extra_names=None):
+def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None):
     paper.ensure_accounts(conn)
     account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
     open_rows = conn.execute("SELECT * FROM paper_positions WHERE account_id=?",(account["id"],)).fetchall()
@@ -211,7 +212,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None):
     names = {a["asset_id"]: a.get("token_name") for a in assets}
     names.update(extra_names or {})
     for mint, pair in pairs.items():
-        if mint in positions:
+        if mint in positions or (approved_mints is not None and mint not in approved_mints):
             continue
         score, reason = _score(pair)
         if score is not None:
@@ -244,6 +245,43 @@ def _trade_decisions(conn, assets, pairs, extra_names=None):
     return {"prices": prices, "candidate_count": len(candidates), "entries": entries}
 
 
+async def _bubble_approved(client, mint):
+    """Fail closed unless BubbleMaps reports strong launch-health evidence."""
+    now = time.time()
+    cached = _BUBBLE_CACHE.get(mint)
+    if cached and now - cached[0] < 300:
+        return cached[1]
+    approved = False
+    try:
+        response = await client.get("https://bubblemaps.dev/api/map/" + mint)
+        response.raise_for_status()
+        payload = response.json()
+        launch = ((payload.get("map") or {}).get("launch") or {})
+        score = launch.get("score")
+        if launch.get("status") == "ok" and isinstance(score, (int,float)) and score >= 70:
+            limits = {"sniperShare":0.35, "bundleShare":0.25, "devClusterShare":0.25, "top10Share":0.75}
+            approved = all(not isinstance(launch.get(field),(int,float)) or launch[field] <= ceiling
+                           for field,ceiling in limits.items())
+    except (httpx.HTTPError, ValueError, TypeError):
+        approved = False
+    _BUBBLE_CACHE[mint] = (now, approved)
+    return approved
+
+
+async def _approved_candidates(client, pairs):
+    ranked = []
+    for mint, pair in pairs.items():
+        score, reason = _score(pair)
+        if score is not None:
+            ranked.append((score, mint))
+    ranked.sort(reverse=True)
+    # Check only the three strongest activity-qualified candidates per scan;
+    # results are cached for five minutes to respect provider limits.
+    checks = ranked[:3]
+    results = await asyncio.gather(*(_bubble_approved(client, mint) for _,mint in checks))
+    return {mint for (_,mint), ok in zip(checks, results) if ok}
+
+
 async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
     """Run while the API process is alive; SQLite lease prevents duplicate workers."""
     conn = connect(db_path)
@@ -266,7 +304,8 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                             if mint not in mints:
                                 mints.append(mint)
                         pairs = await _fetch_pairs(client, mints) if mints else {}
-                        outcome = _trade_decisions(conn, assets, pairs, pump_names)
+                        approved_mints = await _approved_candidates(client, pairs)
+                        outcome = _trade_decisions(conn, assets, pairs, pump_names, approved_mints)
                         _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=None)
                         log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d",
                                  len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]))
@@ -306,7 +345,7 @@ def bot_status(conn):
         "last_error": state["last_error"],
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
-                        "min_buys_5m":MIN_BUYS_5M,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
+                        "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
         "note": "Paper simulation only. The scanner evaluates up to 50 assets already collected by the PumpPortal collector; it is not the full Pump.fun market. It skips missing metrics and may make no trades."
     }
 
