@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 import os
 import time
 import uuid
@@ -28,7 +29,7 @@ TAKE_PROFIT_PCT = 20.0
 
 
 def _state(conn):
-    conn.execute("INSERT OR IGNORE INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,1,1000)")
+    conn.execute("INSERT OR IGNORE INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,0,1000)")
     conn.commit()
     state = dict(conn.execute("SELECT * FROM paper_bot_state WHERE id=1").fetchone())
     paper.ensure_accounts(conn)
@@ -49,7 +50,7 @@ def _state(conn):
 
 
 def _set_status(conn, **values):
-    allowed = {"heartbeat_at", "last_scan_at", "last_error", "started_at"}
+    allowed = {"heartbeat_at", "last_scan_at", "last_error", "started_at", "run_started_at", "run_until", "session_seconds"}
     fields = [(k, v) for k, v in values.items() if k in allowed]
     if fields:
         conn.execute("UPDATE paper_bot_state SET " + ",".join(k+"=?" for k,_ in fields) + " WHERE id=1",
@@ -299,6 +300,10 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                 try:
                     state = _state(conn)
                     _set_status(conn, heartbeat_at=utcnow())
+                    if state.get("run_until") and state["enabled"] and datetime.fromisoformat(state["run_until"].replace("Z","+00:00")) <= datetime.now(timezone.utc):
+                        conn.execute("UPDATE paper_bot_state SET enabled=0 WHERE id=1")
+                        conn.commit()
+                        state = _state(conn)
                     if not state["enabled"] or not _claim(conn):
                         await asyncio.sleep(INTERVAL_SECONDS)
                         continue
@@ -346,7 +351,10 @@ def bot_status(conn):
         "enabled": bool(state["enabled"]),
         "status": "ACTIVE" if state["enabled"] and age is not None and age < 12 else ("STARTING" if state["enabled"] else "PAUSED"),
         "allocated_capital_usd": state["allocated_capital_usd"],
-        "started_at": state["started_at"],
+        "started_at": state.get("run_started_at"),
+        "run_until": state.get("run_until"),
+        "session_seconds": state.get("session_seconds"),
+        "remaining_seconds": max(0, int((datetime.fromisoformat(state["run_until"].replace("Z","+00:00"))-datetime.now(timezone.utc)).total_seconds())) if state.get("run_until") and state["enabled"] else 0,
         "heartbeat_at": state["heartbeat_at"],
         "last_scan_at": state["last_scan_at"],
         "heartbeat_age_seconds": round(age,1) if age is not None else None,
@@ -359,7 +367,7 @@ def bot_status(conn):
     }
 
 
-def configure_bot(conn, enabled=None, allocated_capital_usd=None):
+def configure_bot(conn, enabled=None, allocated_capital_usd=None, duration_seconds=None):
     state = _state(conn)
     if allocated_capital_usd is not None:
         if not isinstance(allocated_capital_usd,(int,float)) or allocated_capital_usd < 100 or allocated_capital_usd > 100000:
@@ -374,6 +382,15 @@ def configure_bot(conn, enabled=None, allocated_capital_usd=None):
                      (float(allocated_capital_usd),float(allocated_capital_usd),now,account["id"]))
         conn.execute("UPDATE paper_bot_state SET allocated_capital_usd=? WHERE id=1",(float(allocated_capital_usd),))
     if enabled is not None:
-        conn.execute("UPDATE paper_bot_state SET enabled=? WHERE id=1",(1 if enabled else 0,))
+        if enabled:
+            allowed_durations = {900, 1800, 3600, 7200, 14400}
+            if duration_seconds not in allowed_durations:
+                raise ValueError("Choose a run duration of 15 minutes, 30 minutes, 1 hour, 2 hours, or 4 hours")
+            started = datetime.now(timezone.utc)
+            ends = started + timedelta(seconds=duration_seconds)
+            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,session_seconds=?,last_error=NULL WHERE id=1",
+                         (started.strftime("%Y-%m-%dT%H:%M:%SZ"),ends.strftime("%Y-%m-%dT%H:%M:%SZ"),duration_seconds))
+        else:
+            conn.execute("UPDATE paper_bot_state SET enabled=0,run_until=NULL WHERE id=1")
     conn.commit()
     return bot_status(conn)
