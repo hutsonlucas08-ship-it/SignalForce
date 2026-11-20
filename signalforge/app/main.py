@@ -2,7 +2,6 @@
 import json
 import logging
 import time
-import time
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -256,20 +255,25 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         assets = scan_assets(conn, limit)
         mints = [asset["asset_id"] for asset in assets]
         results = {}
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            for start in range(0, len(mints), 30):
-                batch = mints[start:start + 30]
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            async def fetch_batch(batch):
                 if not batch:
-                    continue
+                    return []
                 url = "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch)
                 try:
                     response = await client.get(url, headers={"Accept": "application/json"})
                     response.raise_for_status()
-                    pairs = response.json()
+                    payload = response.json()
+                    return payload if isinstance(payload, list) else []
                 except (httpx.HTTPError, ValueError):
-                    continue
-                if not isinstance(pairs, list):
-                    continue
+                    log.warning("DexScreener market-data batch failed")
+                    return []
+
+            batches = [mints[start:start + 30] for start in range(0, len(mints), 30)]
+            batch_results = await __import__("asyncio").gather(
+                *(fetch_batch(batch) for batch in batches)
+            )
+            for pairs in batch_results:
                 for pair in pairs:
                     if not isinstance(pair, dict) or pair.get("chainId") != "solana":
                         continue
