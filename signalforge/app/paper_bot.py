@@ -107,6 +107,48 @@ def _score(pair):
     return round(score, 2), None
 
 
+async def _pumpfun_discoveries(client):
+    """Fetch trending and newest callout mints when an approved Pump.fun key is configured."""
+    key = os.getenv("PUMPFUN_API_KEY")
+    if not key:
+        return [], {}
+    headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
+    requests = [
+        client.get("https://api.pump.fun/v1/home-feed",
+                   params={"pageSize": 50, "chain": "solana", "minMarketCapUsd": 10000,
+                           "maxMarketCapUsd": 5000000, "assetClasses": "coin"},
+                   headers=headers),
+        client.get("https://api.pump.fun/v1/home-feed/new",
+                   params={"pageSize": 50, "chain": "solana", "updatesLimit": 2},
+                   headers=headers),
+    ]
+    responses = await asyncio.gather(*requests, return_exceptions=True)
+    names = {}
+    mints = []
+    for response in responses:
+        if isinstance(response, Exception):
+            log.warning("Pump.fun discovery request failed: %s", type(response).__name__)
+            continue
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            log.warning("Pump.fun discovery response unavailable")
+            continue
+        for coin in (payload.get("coins") or []) if isinstance(payload, dict) else []:
+            if not isinstance(coin, dict):
+                continue
+            mint = coin.get("coinMint")
+            if not isinstance(mint, str) or not mint:
+                continue
+            if coin.get("chain") not in (None, "solana"):
+                continue
+            if mint not in mints:
+                mints.append(mint)
+            names[mint] = coin.get("coinName") or coin.get("symbol") or mint[:8]
+    return mints, names
+
+
 async def _fetch_pairs(client, mints):
     async def one(batch):
         try:
@@ -135,7 +177,7 @@ async def _fetch_pairs(client, mints):
     return out
 
 
-def _trade_decisions(conn, assets, pairs):
+def _trade_decisions(conn, assets, pairs, extra_names=None):
     paper.ensure_accounts(conn)
     account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
     open_rows = conn.execute("SELECT * FROM paper_positions WHERE account_id=?",(account["id"],)).fetchall()
@@ -167,6 +209,7 @@ def _trade_decisions(conn, assets, pairs):
     # Never chase tokens without recent buyers, volume, liquidity and positive momentum.
     candidates = []
     names = {a["asset_id"]: a.get("token_name") for a in assets}
+    names.update(extra_names or {})
     for mint, pair in pairs.items():
         if mint in positions:
             continue
@@ -218,8 +261,12 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                     try:
                         assets = scan_assets(conn, 50)
                         mints = [a["asset_id"] for a in assets if a.get("asset_id")]
+                        pump_mints, pump_names = await _pumpfun_discoveries(client)
+                        for mint in pump_mints:
+                            if mint not in mints:
+                                mints.append(mint)
                         pairs = await _fetch_pairs(client, mints) if mints else {}
-                        outcome = _trade_decisions(conn, assets, pairs)
+                        outcome = _trade_decisions(conn, assets, pairs, pump_names)
                         _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=None)
                         log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d",
                                  len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]))
