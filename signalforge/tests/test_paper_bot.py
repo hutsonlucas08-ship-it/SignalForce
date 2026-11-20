@@ -32,3 +32,25 @@ def test_paper_bot_fails_closed_when_liquidity_is_missing():
     score, reason = _score(pair)
     assert score is None
     assert reason == "Liquidity below $15,000 or missing"
+
+from app.db import connect, run_migrations
+from app.paper_bot import bot_status, configure_bot
+
+
+def test_paper_bot_starts_paused_and_requires_timed_manual_start():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    status = bot_status(conn)
+    assert status["enabled"] is False
+    assert status["status"] == "PAUSED"
+    try:
+        configure_bot(conn, enabled=True)
+        assert False, "Starting without a selected duration must fail"
+    except ValueError:
+        pass
+    status = configure_bot(conn, enabled=True, duration_seconds=1800)
+    assert status["enabled"] is True
+    assert status["session_seconds"] == 1800
+    assert status["remaining_seconds"] > 0
+    status = configure_bot(conn, enabled=False)
+    assert status["enabled"] is False
