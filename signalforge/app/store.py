@@ -53,7 +53,8 @@ def register_source(conn, name: str, kind: str) -> None:
 
 def record_source_success(conn, name: str) -> None:
     conn.execute(
-        "UPDATE data_sources SET last_success_at=?, consecutive_failures=0 WHERE name=?", (utcnow(), name)
+        "UPDATE data_sources SET last_success_at=?, last_error_at=NULL, last_error=NULL, "
+        "consecutive_failures=0 WHERE name=?", (utcnow(), name)
     )
     conn.commit()
 
