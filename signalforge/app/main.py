@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from urllib.parse import urlparse
 from pathlib import Path
@@ -416,6 +417,29 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="Invalid asset ID")
         return build_brain_report(conn, asset_id, settings.stale_after_seconds)
 
+
+    @app.get("/v1/research/pumpfun-callouts")
+    async def pumpfun_callouts(_: Principal = Depends(require_read)):
+        """Newest Pump.fun callouts; requires an approved server-side developer API key."""
+        key = os.getenv("PUMPFUN_API_KEY")
+        if not key:
+            return {"configured": False, "callouts": [],
+                    "note": "Add PUMPFUN_API_KEY as a Codespaces secret after Pump.fun approves a free Developer API application. The key must stay server-side."}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    "https://api.pump.fun/v1/home-feed/new",
+                    params={"pageSize": 50, "chain": "solana", "updatesLimit": 3},
+                    headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            return {"configured": True, "callouts": payload.get("coins", []) if isinstance(payload, dict) else [],
+                    "next_page_token": payload.get("nextPageToken") if isinstance(payload, dict) else None,
+                    "source": "Pump.fun Developer API · newest-first Solana callouts"}
+        except (httpx.HTTPError, ValueError):
+            log.warning("Pump.fun callout feed request failed")
+            raise HTTPException(status_code=502, detail="Pump.fun callout feed is temporarily unavailable or the API key lacks content.read access")
 
     @app.get("/v1/research/trending-now")
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
