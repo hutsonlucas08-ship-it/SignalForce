@@ -48,6 +48,7 @@ class PaperMarkRequest(BaseModel):
 class PaperBotConfigRequest(BaseModel):
     enabled: Optional[bool] = None
     allocated_capital_usd: Optional[float] = Field(default=None, ge=100, le=100000)
+    duration_seconds: Optional[int] = None
 
 
 class RiskScreenRequest(BaseModel):
@@ -486,7 +487,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/v1/paper/bot/config")
     def paper_bot_config(body: PaperBotConfigRequest, _: Principal = Depends(require_read), conn=Depends(get_conn)):
         try:
-            return paper_bot.configure_bot(conn, body.enabled, body.allocated_capital_usd)
+            return paper_bot.configure_bot(conn, body.enabled, body.allocated_capital_usd, body.duration_seconds)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
