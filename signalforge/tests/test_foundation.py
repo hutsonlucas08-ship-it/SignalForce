@@ -146,3 +146,11 @@ def test_unhandled_errors_do_not_leak_details(monkeypatch):
     monkeypatch.setattr(store, "list_sources", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("secret detail")))
     r = c.get("/v1/system/sources", headers=h(READ))
     assert r.status_code == 500 and "secret" not in r.text
+
+
+def test_dashboard_is_served_at_root():
+    c, _ = make_client()
+    response = c.get("/")
+    assert response.status_code == 200
+    assert "SignalForge" in response.text
+    assert "Token Scanner" in response.text
