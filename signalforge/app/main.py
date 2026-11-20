@@ -1,6 +1,7 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
 import json
 import logging
+from urllib.parse import urlparse
 from pathlib import Path
 
 import httpx
@@ -154,6 +155,75 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if limit < 1 or limit > 200:
             raise HTTPException(status_code=422, detail="Limit must be between 1 and 200")
         return {"assets": scan_assets(conn, limit)}
+
+    @app.get("/v1/research/token-images")
+    async def research_token_images(
+        limit: int = 50,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        """Resolve original launch metadata URIs to their token artwork."""
+        if limit < 1 or limit > 50:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+        assets = scan_assets(conn, limit)
+        allowed_hosts = {
+            "ipfs.io", "gateway.pinata.cloud", "cloudflare-ipfs.com",
+            "cf-ipfs.com", "arweave.net", "www.arweave.net",
+            "pump.fun", "metadata.pump.fun",
+        }
+
+        def metadata_url(value):
+            if not isinstance(value, str) or len(value) > 2048:
+                return None
+            value = value.strip()
+            if value.startswith("ipfs://"):
+                value = "https://ipfs.io/ipfs/" + value[7:].lstrip("/")
+            elif value.startswith("ar://"):
+                value = "https://arweave.net/" + value[5:].lstrip("/")
+            parsed = urlparse(value)
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme != "https" or not any(
+                host == allowed or host.endswith("." + allowed) for allowed in allowed_hosts
+            ):
+                return None
+            return value
+
+        async def resolve(client, asset):
+            uri = metadata_url(asset.get("metadata_uri"))
+            if not uri:
+                return None
+            try:
+                response = await client.get(uri, headers={"Accept": "application/json"}, follow_redirects=False)
+                response.raise_for_status()
+                if len(response.content) > 1_000_000:
+                    return None
+                metadata = response.json()
+                if not isinstance(metadata, dict):
+                    return None
+                image = metadata.get("image") or metadata.get("imageUrl") or metadata.get("image_uri")
+                if not isinstance(image, str):
+                    return None
+                image = image.strip()
+                if image.startswith("ipfs://"):
+                    image = "https://ipfs.io/ipfs/" + image[7:].lstrip("/")
+                elif image.startswith("ar://"):
+                    image = "https://arweave.net/" + image[5:].lstrip("/")
+                parsed_image = urlparse(image)
+                if parsed_image.scheme != "https" or not parsed_image.hostname:
+                    return None
+                return asset["asset_id"], image[:2048]
+            except (httpx.HTTPError, ValueError, TypeError):
+                return None
+
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resolved = await __import__("asyncio").gather(
+                *(resolve(client, asset) for asset in assets if asset.get("metadata_uri"))
+            )
+        return {
+            "images": {mint: image for item in resolved if item for mint, image in [item]},
+            "source": "original token metadata",
+            "note": "Artwork is read from the token's metadata URI when that URI is hosted on a supported public metadata gateway. Some tokens may not expose resolvable metadata.",
+        }
 
     @app.get("/v1/research/market-data")
     async def research_market_data(
