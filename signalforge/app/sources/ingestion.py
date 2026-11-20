@@ -21,6 +21,8 @@ def process_message(conn, source: str, raw: str) -> int:
 
         asset_id = message.get("mint") or message.get("asset_id")
         kind = message.get("txType") or message.get("type")
+        if not kind and message.get("mint") and message.get("pool"):
+            kind = "migration"
 
         if not isinstance(asset_id, str) or not asset_id.strip():
             raise IngestionError("Missing or invalid asset identifier")
