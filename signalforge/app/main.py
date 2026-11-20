@@ -1,6 +1,7 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
 import json
 import logging
+import time
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
 
 log = logging.getLogger("signalforge")
+_bubble_cache = {}
 
 
 class HaltRequest(BaseModel):
@@ -281,6 +283,32 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     if previous is None or pair_liquidity > previous_liquidity:
                         results[mint] = current
         return {"market_data": results, "source": "DexScreener", "note": "Current public DEX snapshot; values can be delayed or unavailable for tokens without indexed pools. Holder counts are not provided by this endpoint."}
+
+    @app.get("/v1/research/assets/{asset_id}/launch-health")
+    async def asset_launch_health(asset_id: str, _: Principal = Depends(require_read)):
+        """Return Bubblemaps launch-health evidence, not a rug probability."""
+        if not asset_id.strip() or len(asset_id) > 128:
+            raise HTTPException(status_code=422, detail="Invalid asset ID")
+        cached = _bubble_cache.get(asset_id)
+        now = time.time()
+        if cached and now - cached[0] < 300:
+            return cached[1]
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get("https://bubblemaps.dev/api/map/" + asset_id)
+                response.raise_for_status()
+                payload = response.json()
+            launch = ((payload.get("map") or {}).get("launch") or {})
+            score = launch.get("score")
+            if launch.get("status") != "ok" or not isinstance(score, (int, float)):
+                result = {"status": "INSUFFICIENT_DATA", "health_score": None, "risk_index": None, "note": "No Bubblemaps launch score is available. Missing data is not evidence of safety."}
+            else:
+                health = max(0.0, min(100.0, float(score)))
+                result = {"status": "AVAILABLE", "health_score": health, "risk_index": 100.0 - health, "breakdown": launch.get("breakdown") or [], "sniper_share": launch.get("sniperShare"), "bundle_share": launch.get("bundleShare"), "dev_cluster_share": launch.get("devClusterShare"), "top10_share": launch.get("top10Share"), "top_cluster_share": launch.get("topClusterShare"), "source": "Bubblemaps", "note": "Risk index is the inverse of Bubblemaps launch health. It is a screening indicator, not a rug probability or guarantee."}
+        except (httpx.HTTPError, ValueError, TypeError):
+            result = {"status": "UNAVAILABLE", "health_score": None, "risk_index": None, "note": "Bubblemaps data is temporarily unavailable or this token has not been mapped."}
+        _bubble_cache[asset_id] = (now, result)
+        return result
 
     @app.get("/v1/research/assets/{asset_id}/analysis")
     def asset_analysis(
