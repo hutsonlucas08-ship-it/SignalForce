@@ -1,9 +1,11 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
 import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import store
@@ -54,6 +56,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             yield conn
         finally:
             conn.close()
+
+    @app.get("/", include_in_schema=False)
+    def dashboard():
+        """Serve the SignalForge browser dashboard."""
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
 
     @app.get("/health")
     def liveness():
