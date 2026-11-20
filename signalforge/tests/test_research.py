@@ -32,6 +32,17 @@ def test_scan_assets_counts_observations_and_sources(tmp_path):
         conn.close()
 
 
+def test_scan_assets_records_first_observed_market_cap(tmp_path):
+    conn = seeded_db(tmp_path)
+    try:
+        add_observation(conn, "feed_a", "CAP1", "create", '{"marketCapSol":123.45}')
+        add_observation(conn, "feed_a", "CAP1", "trade", '{"marketCapSol":150.0}')
+        assets = {item["asset_id"]: item for item in scan_assets(conn)}
+        assert assets["CAP1"]["first_seen_market_cap_sol"] == 123.45
+    finally:
+        conn.close()
+
+
 def test_analyze_asset_summarizes_evidence_and_flags_single_source(tmp_path):
     conn = seeded_db(tmp_path)
     try:
@@ -161,6 +172,37 @@ def test_research_endpoints_return_asset_reports(tmp_path):
     assert analysis.status_code == 200
     assert analysis.json()["observation_count"] == 1
     assert analysis.json()["token_metadata"] == {"symbol": "EX"}
+
+
+def test_market_data_endpoint_returns_empty_snapshot_without_assets(tmp_path):
+    settings = Settings(
+        db_path=str(tmp_path / "market_data.db"),
+        read_api_keys=frozenset({"r" * 32}),
+        admin_api_keys=frozenset({"a" * 32}),
+    )
+    client = TestClient(create_app(settings))
+    response = client.get(
+        "/v1/research/market-data",
+        headers={"X-API-Key": "r" * 32},
+    )
+    assert response.status_code == 200
+    assert response.json()["market_data"] == {}
+    assert response.json()["source"] == "DexScreener"
+    assert "Holder counts are not provided" in response.json()["note"]
+
+
+def test_market_data_limit_is_validated(tmp_path):
+    settings = Settings(
+        db_path=str(tmp_path / "market_limit.db"),
+        read_api_keys=frozenset({"r" * 32}),
+        admin_api_keys=frozenset({"a" * 32}),
+    )
+    client = TestClient(create_app(settings))
+    response = client.get(
+        "/v1/research/market-data?limit=51",
+        headers={"X-API-Key": "r" * 32},
+    )
+    assert response.status_code == 422
 
 
 def test_research_asset_limit_is_validated(tmp_path):
