@@ -343,7 +343,6 @@ def bot_status(conn):
     age = None
     if state.get("heartbeat_at"):
         try:
-            from datetime import datetime, timezone
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(state["heartbeat_at"].replace("Z","+00:00"))).total_seconds()
         except ValueError:
             pass
