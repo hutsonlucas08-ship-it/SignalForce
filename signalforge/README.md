@@ -18,6 +18,25 @@ uvicorn app.main:app_factory --factory --port 8000
 ```
 Check it: `curl localhost:8000/health`, then open http://localhost:8000/docs.
 
+## Run the live public-data collector
+
+Open a **second terminal** from the `signalforge` folder, activate the same virtual
+environment, and run:
+
+```bash
+python -m app.sources.collector
+```
+
+The collector subscribes only to PumpPortal's free `subscribeNewToken` and
+`subscribeMigration` streams. It stores validated observations in the configured
+SQLite database and reconnects with backoff after network failures. It does not
+subscribe to paid trade streams and does not need a wallet or private key.
+
+An optional `PUMPPORTAL_API_KEY` environment variable can be set if your PumpPortal
+account requires a key. Never commit API keys to Git.
+
+Stop the collector with Ctrl+C.
+
 ## Test
 `python -m pytest -q`
 
@@ -37,7 +56,7 @@ Check it: `curl localhost:8000/health`, then open http://localhost:8000/docs.
 Give Grok only a **read** key. Keep the **admin** key to yourself.
 
 ## Not done yet (later stages)
-Live data collector orchestration, richer analysis, shadow-trade analytics, dashboard, Telegram alerts, Grok connection, cloud deployment, backups.
+Collector supervision inside the API process, richer analysis, shadow-trade analytics, dashboard, Telegram alerts, Grok connection, cloud deployment, backups.
 Database is SQLite for now; Stage 8 decides whether to move to Postgres for cloud hosting.
 
 
