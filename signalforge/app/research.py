@@ -70,6 +70,9 @@ def scan_assets(conn, limit: int = 50) -> list[dict]:
             except (json.JSONDecodeError, TypeError):
                 continue
             if isinstance(payload, dict):
+                metadata_uri = payload.get("uri") or payload.get("metadataUri") or payload.get("metadata_uri")
+                if not asset.get("metadata_uri") and isinstance(metadata_uri, str) and metadata_uri.strip():
+                    asset["metadata_uri"] = metadata_uri.strip()[:2048]
                 if not asset.get("token_name"):
                     name = payload.get("name")
                     symbol = payload.get("symbol")
