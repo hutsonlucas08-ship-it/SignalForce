@@ -346,7 +346,8 @@ def bot_status(conn):
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
                         "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
-        "note": "Paper simulation only. The scanner evaluates up to 50 assets already collected by the PumpPortal collector; it is not the full Pump.fun market. It skips missing metrics and may make no trades."
+        "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
+        "note": "Paper simulation only. Discovery combines PumpPortal launches with Pump.fun trending and newest callouts when an approved API key is configured. New entries require strong BubbleMaps launch health; missing evidence is rejected. The scanner is not the full market and may make no trades."
     }
 
 
