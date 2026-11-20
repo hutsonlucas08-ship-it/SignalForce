@@ -39,10 +39,7 @@ Stop the collector with Ctrl+C.
 
 ## Automatic paper bot and Pump.fun discovery
 
-The API server starts the automatic **paper-only** scanner on startup. It scans every
-3 seconds while the backend process is running, selects entries itself, and manages
-paper exits (10% stop loss / 20% take profit). It never connects a wallet or submits
-a live transaction. The browser does not need to select a token.
+The API server starts the paper-bot worker in **standby** on startup; it does not scan or trade until a person explicitly starts a timed session in the dashboard. Choose virtual capital and a session duration (15 minutes, 30 minutes, 1 hour, 2 hours, or 4 hours). The worker scans on a 3-second target cycle while the session is active, chooses entries itself, and manages paper exits (10% stop loss / 20% take profit). It never connects a wallet or submits a live transaction. The browser does not need to select a token. The session automatically pauses at the selected end time; open positions remain visible.
 
 The scanner uses PumpPortal-discovered launches plus DexScreener activity snapshots.
 For Pump.fun's newest callouts and trending feed, SignalForge supports the official
