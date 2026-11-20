@@ -45,6 +45,21 @@ def scan_assets(conn, limit: int = 50) -> list[dict]:
     )
     assets = [dict(row) for row in rows]
     for asset in assets:
+        first_row = conn.execute(
+            "SELECT kind, payload, observed_at FROM observations WHERE asset_id = ? ORDER BY id ASC LIMIT 1",
+            (asset["asset_id"],),
+        ).fetchone()
+        if first_row:
+            try:
+                first_payload = json.loads(first_row["payload"])
+            except (json.JSONDecodeError, TypeError):
+                first_payload = {}
+            if isinstance(first_payload, dict):
+                launch_cap = first_payload.get("marketCapSol")
+                if isinstance(launch_cap, (int, float)) and not isinstance(launch_cap, bool) and math.isfinite(launch_cap):
+                    asset["first_seen_market_cap_sol"] = launch_cap
+                    asset["first_seen_market_cap_at"] = first_row["observed_at"]
+    for asset in assets:
         image_rows = conn.execute(
             "SELECT payload FROM observations WHERE asset_id = ? ORDER BY id DESC LIMIT 200",
             (asset["asset_id"],),
