@@ -13,14 +13,28 @@ class IngestionError(ValueError):
     """Raised when a message cannot be accepted for storage."""
 
 
-def process_message(conn, source: str, raw: str) -> int:
-    """Validate and store one public market-data observation."""
+def process_message(conn, source: str, raw: str) -> int | None:
+    """Validate and store one public market-data observation.
 
+    PumpPortal also sends subscription acknowledgements over the websocket.
+    Those control frames are not token observations and are safely ignored.
+    """
     try:
         message = parse_message(raw)
 
         asset_id = message.get("mint") or message.get("asset_id")
         kind = message.get("txType") or message.get("type")
+
+        # Subscription acknowledgements can contain a human-readable message
+        # but no mint or event type. Ignore these instead of recording a
+        # misleading "missing asset identifier" ingestion failure.
+        if (
+            not asset_id
+            and not kind
+            and isinstance(message.get("message"), str)
+        ):
+            return None
+
         if not kind and message.get("mint") and message.get("pool"):
             kind = "migration"
 
