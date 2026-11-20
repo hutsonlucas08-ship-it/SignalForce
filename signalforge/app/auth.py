@@ -6,6 +6,10 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.security import APIKeyHeader
+
+
+_api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
 @dataclass(frozen=True)
@@ -49,9 +53,12 @@ class RateLimiter:
         q.append(now)
 
 
-def _authenticate(request: Request) -> Principal:
+def _authenticate(
+    request: Request,
+    api_key: str | None = Depends(_api_key_header),
+) -> Principal:
     settings = request.app.state.settings
-    key = _extract(request)
+    key = api_key or _extract(request)
     if not key:
         raise HTTPException(status_code=401, detail="Missing API key")
     if _match(key, settings.admin_api_keys):
