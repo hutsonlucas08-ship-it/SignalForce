@@ -71,6 +71,22 @@ def test_analyze_asset_extracts_only_explicit_provider_fields(tmp_path):
         conn.close()
 
 
+def test_scan_and_analysis_expose_only_https_image_urls(tmp_path):
+    conn = seeded_db(tmp_path)
+    try:
+        add_observation(conn, "feed_a", "IMAGE1", "create",
+                        '{"name":"Image Token","image":"https://cdn.example/token.png"}')
+        add_observation(conn, "feed_a", "IMAGE2", "create",
+                        '{"name":"Bad Image","image":"javascript:alert(1)"}')
+        scanned = {item["asset_id"]: item for item in scan_assets(conn)}
+        assert scanned["IMAGE1"]["image_url"] == "https://cdn.example/token.png"
+        assert "image_url" not in scanned["IMAGE2"]
+        assert analyze_asset(conn, "IMAGE1")["image_url"] == "https://cdn.example/token.png"
+        assert analyze_asset(conn, "IMAGE2")["image_url"] is None
+    finally:
+        conn.close()
+
+
 def test_analyze_asset_ignores_malformed_payload_without_crashing(tmp_path):
     conn = seeded_db(tmp_path)
     try:
