@@ -37,6 +37,31 @@ account requires a key. Never commit API keys to Git.
 
 Stop the collector with Ctrl+C.
 
+## Automatic paper bot and Pump.fun discovery
+
+The API server starts the automatic **paper-only** scanner on startup. It scans every
+3 seconds while the backend process is running, selects entries itself, and manages
+paper exits (10% stop loss / 20% take profit). It never connects a wallet or submits
+a live transaction. The browser does not need to select a token.
+
+The scanner uses PumpPortal-discovered launches plus DexScreener activity snapshots.
+For Pump.fun's newest callouts and trending feed, SignalForge supports the official
+Pump.fun Developer API. Apply at https://developers.pump.fun and request the
+`content.read` scope. Access is free for approved organisations but requires review;
+there are no instant test keys. Add the approved key to your local `.env` or the
+Codespaces repository secret named `PUMPFUN_API_KEY`, then restart the API server.
+The key is server-side only and must never be placed in the browser or committed to Git.
+
+When configured, SignalForge reads the Pump.fun trending home feed (filtered to
+Solana coins in a $10K–$5M market-cap band) and the newest-first Solana callouts feed.
+The bot still requires live DexScreener activity and BubbleMaps launch health of at
+least 70 before a paper entry. Missing launch-health evidence blocks entry. This is
+a conservative filter, not a guarantee that a token cannot rug or that a trade will profit.
+
+The PumpPortal collector still runs in a second terminal as described above; it adds
+new-token and migration discoveries. The bot can remain ACTIVE while making zero
+trades if no token passes every filter. It stops when the API server stops or sleeps.
+
 ## Test
 `python -m pytest -q`
 
@@ -49,14 +74,18 @@ Stop the collector with Ctrl+C.
 | GET /v1/system/events | read | recent system events |
 | POST /v1/research/risk-screen | read | explainable, fail-closed token risk screening (not a trade signal) |
 | GET /v1/research/assets | read | recently observed asset discovery list |
+| GET /v1/research/trending-now | read | strongest live activity-qualified candidates |
+| GET /v1/research/pumpfun-callouts | read | newest-first Pump.fun Solana callouts (requires approved API key) |
+| GET /v1/paper/bot | read | automatic paper bot heartbeat and configuration |
+| POST /v1/paper/bot/config | read | pause/resume bot or set virtual capital before first trade |
 | GET /v1/research/assets/{asset_id}/analysis | read | evidence freshness, source diversity, and event-kind summary |
 | GET /v1/control/halt | read | kill-switch state |
 | POST /v1/control/halt, /resume | **admin** | kill switch (starts HALTED) |
 
 Give Grok only a **read** key. Keep the **admin** key to yourself.
 
-## Not done yet (later stages)
-Collector supervision inside the API process, richer analysis, shadow-trade analytics, dashboard, Telegram alerts, Grok connection, cloud deployment, backups.
+## Remaining work
+Collector supervision inside the API process, expanded token-authority and wallet-cluster screening, deeper shadow-trade analytics, Telegram alerts, Grok connection, cloud deployment, backups.
 Database is SQLite for now; Stage 8 decides whether to move to Postgres for cloud hosting.
 
 
