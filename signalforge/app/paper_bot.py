@@ -40,6 +40,11 @@ def _state(conn):
         conn.execute("UPDATE paper_accounts SET starting_balance=?,cash_balance=?,updated_at=? WHERE id=?",
                      (state["allocated_capital_usd"],state["allocated_capital_usd"],now,account["id"]))
         conn.commit()
+    elif trades or positions:
+        state["allocated_capital_usd"] = account["starting_balance"]
+        conn.execute("UPDATE paper_bot_state SET allocated_capital_usd=? WHERE id=1",
+                     (account["starting_balance"],))
+        conn.commit()
     return state
 
 
