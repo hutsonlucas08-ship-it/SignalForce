@@ -29,7 +29,17 @@ TAKE_PROFIT_PCT = 20.0
 def _state(conn):
     conn.execute("INSERT OR IGNORE INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,1,1000)")
     conn.commit()
-    return dict(conn.execute("SELECT * FROM paper_bot_state WHERE id=1").fetchone())
+    state = dict(conn.execute("SELECT * FROM paper_bot_state WHERE id=1").fetchone())
+    paper.ensure_accounts(conn)
+    account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
+    trades = conn.execute("SELECT COUNT(*) n FROM paper_trades WHERE account_id=?",(account["id"],)).fetchone()["n"]
+    positions = conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?",(account["id"],)).fetchone()["n"]
+    if not trades and not positions and account["starting_balance"] != state["allocated_capital_usd"]:
+        now = utcnow()
+        conn.execute("UPDATE paper_accounts SET starting_balance=?,cash_balance=?,updated_at=? WHERE id=?",
+                     (state["allocated_capital_usd"],state["allocated_capital_usd"],now,account["id"]))
+        conn.commit()
+    return state
 
 
 def _set_status(conn, **values):
