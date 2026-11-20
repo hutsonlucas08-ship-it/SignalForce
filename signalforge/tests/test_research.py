@@ -40,7 +40,45 @@ def test_analyze_asset_summarizes_evidence_and_flags_single_source(tmp_path):
         assert report["observation_count"] == 1
         assert report["sources"] == ["feed_a"]
         assert report["kind_counts"] == {"create": 1}
+        assert report["token_metadata"] == {"name": "Other"}
         assert "single_source_only" in report["flags"]
+    finally:
+        conn.close()
+
+
+def test_analyze_asset_extracts_only_explicit_provider_fields(tmp_path):
+    conn = seeded_db(tmp_path)
+    try:
+        add_observation(
+            conn,
+            "feed_a",
+            "ASSET3",
+            "create",
+            '{"name":"Token Three","symbol":"THREE","marketCapSol":42.5,'
+            '"vSolInBondingCurve":8.2,"mintAuthority":null}',
+        )
+        report = analyze_asset(conn, "ASSET3")
+        assert report["token_metadata"] == {
+            "name": "Token Three",
+            "symbol": "THREE",
+        }
+        assert report["observed_metrics"]["marketCapSol"]["value"] == 42.5
+        assert report["observed_metrics"]["vSolInBondingCurve"]["value"] == 8.2
+        assert "mintAuthority" in report["payload_fields"]
+        # Provider market-cap/bonding-curve values must not be presented as verified risk fields.
+        assert "liquidity_usd" not in report["observed_metrics"]
+    finally:
+        conn.close()
+
+
+def test_analyze_asset_ignores_malformed_payload_without_crashing(tmp_path):
+    conn = seeded_db(tmp_path)
+    try:
+        add_observation(conn, "feed_a", "ASSET4", "create", "not-json")
+        report = analyze_asset(conn, "ASSET4")
+        assert report["status"] == "OBSERVED"
+        assert report["token_metadata"] == {}
+        assert report["observed_metrics"] == {}
     finally:
         conn.close()
 
@@ -106,6 +144,7 @@ def test_research_endpoints_return_asset_reports(tmp_path):
     assert assets.json()["assets"][0]["asset_id"] == "ASSET1"
     assert analysis.status_code == 200
     assert analysis.json()["observation_count"] == 1
+    assert analysis.json()["token_metadata"] == {"symbol": "EX"}
 
 
 def test_research_asset_limit_is_validated(tmp_path):
