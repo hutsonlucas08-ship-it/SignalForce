@@ -2,6 +2,8 @@
 import json
 import logging
 from pathlib import Path
+
+import httpx
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -152,6 +154,63 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if limit < 1 or limit > 200:
             raise HTTPException(status_code=422, detail="Limit must be between 1 and 200")
         return {"assets": scan_assets(conn, limit)}
+
+    @app.get("/v1/research/market-data")
+    async def research_market_data(
+        limit: int = 50,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        """Fetch current public DEX Screener snapshots for recently discovered Solana tokens."""
+        if limit < 1 or limit > 50:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+        assets = scan_assets(conn, limit)
+        mints = [asset["asset_id"] for asset in assets]
+        results = {}
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            for start in range(0, len(mints), 30):
+                batch = mints[start:start + 30]
+                if not batch:
+                    continue
+                url = "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch)
+                try:
+                    response = await client.get(url, headers={"Accept": "application/json"})
+                    response.raise_for_status()
+                    pairs = response.json()
+                except (httpx.HTTPError, ValueError):
+                    continue
+                if not isinstance(pairs, list):
+                    continue
+                for pair in pairs:
+                    if not isinstance(pair, dict) or pair.get("chainId") != "solana":
+                        continue
+                    base = pair.get("baseToken") or {}
+                    mint = base.get("address")
+                    if not isinstance(mint, str) or mint not in mints:
+                        continue
+                    liquidity = pair.get("liquidity") or {}
+                    txns = pair.get("txns") or {}
+                    volume = pair.get("volume") or {}
+                    price_change = pair.get("priceChange") or {}
+                    current = {
+                        "market_cap_usd": pair.get("marketCap"),
+                        "fdv_usd": pair.get("fdv"),
+                        "price_usd": pair.get("priceUsd"),
+                        "liquidity_usd": liquidity.get("usd"),
+                        "volume_24h_usd": volume.get("h24"),
+                        "buys_24h": (txns.get("h24") or {}).get("buys"),
+                        "sells_24h": (txns.get("h24") or {}).get("sells"),
+                        "price_change_24h_pct": price_change.get("h24"),
+                        "observed_at": utcnow(),
+                        "source": "DexScreener",
+                    }
+                    previous = results.get(mint)
+                    # Prefer the most liquid pool when a token has multiple pairs.
+                    pair_liquidity = liquidity.get("usd") or 0
+                    previous_liquidity = (previous or {}).get("liquidity_usd") or 0
+                    if previous is None or pair_liquidity > previous_liquidity:
+                        results[mint] = current
+        return {"market_data": results, "source": "DexScreener", "note": "Current public DEX snapshot; values can be delayed or unavailable for tokens without indexed pools. Holder counts are not provided by this endpoint."}
 
     @app.get("/v1/research/assets/{asset_id}/analysis")
     def asset_analysis(
