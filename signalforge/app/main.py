@@ -31,7 +31,20 @@ class HaltRequest(BaseModel):
 
 
 class PaperOrderRequest(BaseModel):
-    strategy: str = Field(pattern=r'^(automatic|approval)
+    strategy: str = Field(min_length=1, max_length=20)
+    asset_id: str = Field(min_length=1, max_length=128)
+    token_name: Optional[str] = Field(default=None, max_length=100)
+    side: str = Field(min_length=1, max_length=10)
+    amount_usd: float = Field(gt=0, le=10000)
+    reference_price: float = Field(gt=0)
+    reason: str = Field(default="paper strategy signal", min_length=1, max_length=200)
+
+
+class PaperMarkRequest(BaseModel):
+    prices: dict[str, float]
+
+
+class RiskScreenRequest(BaseModel):
     liquidity_usd: Optional[float] = Field(default=None, ge=0)
     top_10_holder_pct: Optional[float] = Field(default=None, ge=0, le=100)
     mint_authority_active: Optional[bool] = None
