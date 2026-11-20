@@ -20,7 +20,7 @@ from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot
+from . import paper, paper_bot, telegram_alerts
 
 log = logging.getLogger("signalforge")
 _price_history = {}
@@ -479,6 +479,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "rejected": rejected, "source": "Pump.fun trending + newest callouts (when API key configured), PumpPortal launches, and DexScreener market data",
                 "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
                 "note": "Coverage expands with an approved Pump.fun API key; otherwise this scans PumpPortal-discovered assets only. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
+
+    @app.get("/v1/telegram/status")
+    def telegram_status(_: Principal = Depends(require_read)):
+        return telegram_alerts.status()
+
+    @app.post("/v1/telegram/test")
+    async def telegram_test(_: Principal = Depends(require_read)):
+        try:
+            return await telegram_alerts.send_test()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Telegram could not deliver the test message")
 
     @app.get("/v1/paper/bot")
     def paper_bot_status(_: Principal = Depends(require_read), conn=Depends(get_conn)):
