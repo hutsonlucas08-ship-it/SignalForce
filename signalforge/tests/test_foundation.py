@@ -145,6 +145,14 @@ def test_shadow_tables_cannot_be_labeled_live():
         conn.execute("INSERT INTO shadow_sessions (started_at, starting_balance, mode) VALUES ('t', 100, 'live')")
 
 
+def test_config_ignores_unedited_template_placeholders(monkeypatch):
+    monkeypatch.setenv("SIGNALFORGE_READ_KEYS", "REPLACE_WITH_YOUR_OWN_READ_KEY")
+    monkeypatch.setenv("SIGNALFORGE_ADMIN_KEYS", "REPLACE_WITH_YOUR_OWN_ADMIN_KEY")
+    settings = load_settings()
+    assert settings.read_api_keys == frozenset()
+    assert settings.admin_api_keys == frozenset()
+
+
 def test_config_rejects_short_and_shared_keys(monkeypatch):
     monkeypatch.setenv("SIGNALFORGE_READ_KEYS", "short")
     with pytest.raises(ConfigError):
