@@ -18,6 +18,22 @@ uvicorn app.main:app_factory --factory --port 8000
 ```
 Check it: `curl localhost:8000/health`, then open http://localhost:8000/docs.
 
+## Run in GitHub Codespaces
+
+For Codespaces, add `SIGNALFORGE_READ_KEYS` under **Repository Settings → Secrets and variables → Codespaces**. Do not use the Actions secrets page. Codespaces injects repository secrets into the environment when the Codespace is created; after adding or changing a secret, stop and recreate the Codespace (or create a fresh Codespace) so the environment receives it. Keep the key out of chat and source control.
+
+In the Codespaces terminal, from the repository root:
+
+```bash
+cd /workspaces/SignalForce/signalforge
+python3 -m venv venv 2>/dev/null || true
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app_factory --factory --host 0.0.0.0 --port 8000
+```
+
+**Important:** In Codespaces, do not run `source .env` after the Codespaces secret has been injected; that can overwrite the secret with values from a local template file. The dashboard now has a public, safe `/v1/auth/status` diagnostic that reports whether a read key is loaded without revealing its value. If it reports no read key, fix the Codespaces secret injection/recreate the Codespace rather than generating more keys.
+
 ## Run the live public-data collector
 
 Open a **second terminal** from the `signalforge` folder, activate the same virtual
