@@ -24,6 +24,24 @@ def h(key):
     return {"X-API-Key": key}
 
 
+def test_auth_status_reports_configuration_without_exposing_keys():
+    c, _ = make_client()
+    response = c.get("/v1/auth/status")
+    assert response.status_code == 200
+    assert response.json() == {
+        "read_key_configured": True, "read_key_count": 1,
+        "admin_key_configured": True, "admin_key_count": 1,
+    }
+    assert READ not in response.text and ADMIN not in response.text
+
+
+def test_auth_status_reports_missing_keys():
+    settings = Settings(db_path=":memory:", read_api_keys=frozenset(), admin_api_keys=frozenset())
+    response = TestClient(create_app(settings)).get("/v1/auth/status")
+    assert response.json()["read_key_configured"] is False
+    assert response.json()["read_key_count"] == 0
+
+
 def test_liveness_is_public_and_minimal():
     c, _ = make_client()
     r = c.get("/health")
