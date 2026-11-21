@@ -21,7 +21,10 @@ class Settings:
 
 
 def _keys(name: str) -> frozenset:
-    keys = frozenset(k.strip() for k in os.getenv(name, "").split(",") if k.strip())
+    keys = frozenset(
+        k.strip() for k in os.getenv(name, "").split(",")
+        if k.strip() and not k.strip().upper().startswith("REPLACE_WITH_")
+    )
     for k in keys:
         if len(k) < MIN_KEY_LENGTH:
             raise ConfigError(f"{name} contains a key shorter than {MIN_KEY_LENGTH} characters")
