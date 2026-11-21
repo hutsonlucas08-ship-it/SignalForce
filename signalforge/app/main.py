@@ -120,6 +120,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """Public, minimal: is the process up. Reveals nothing else."""
         return {"status": "ok", "time": utcnow()}
 
+    @app.get("/v1/auth/status")
+    def auth_status():
+        """Safe connection diagnostic; reports key configuration counts, never key values."""
+        return {
+            "read_key_configured": bool(settings.read_api_keys),
+            "read_key_count": len(settings.read_api_keys),
+            "admin_key_configured": bool(settings.admin_api_keys),
+            "admin_key_count": len(settings.admin_api_keys),
+        }
+
     @app.get("/v1/system/health")
     def system_health(_: Principal = Depends(require_read), conn=Depends(get_conn)):
         sources = store.list_sources(conn, settings.stale_after_seconds)
