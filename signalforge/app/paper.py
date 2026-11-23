@@ -102,7 +102,7 @@ def place_order(conn, strategy, asset_id, token_name, side, amount_usd, referenc
     _activity(conn,aid,side,"Paper "+side.upper()+" "+(token_name or asset_id[:8])+" | USD "+format(gross,".2f"),
         {"trade_id":trade_id,"asset_id":asset_id,"quantity":qty,"reference_price":reference_price,"fill_price":fill,"fee_usd":fee,"realized_pnl_usd":realized,"reason":reason,"mode":"paper"})
     conn.commit()
-    return {"trade_id":cur.lastrowid,"strategy":strategy,"mode":"paper","side":side,"asset_id":asset_id,"quantity":qty,
+    return {"trade_id":trade_id,"strategy":strategy,"mode":"paper","side":side,"asset_id":asset_id,"quantity":qty,
         "reference_price":reference_price,"fill_price":fill,"gross_usd":gross,"fee_usd":fee,"realized_pnl_usd":realized,
         "created_at":now,"note":"Simulated fill only. No funds moved or transaction submitted."}
 
