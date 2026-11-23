@@ -41,6 +41,22 @@ The app intentionally refuses to start on Render without `DATABASE_URL`, rather 
 
 The current Render Blueprint defines a Free web service and does not attach a persistent disk. Do not deploy it with an empty `DATABASE_URL`.
 
+## One-time SQLite-to-PostgreSQL data transfer
+
+The application does not automatically copy an existing SQLite database into Neon. Use the guarded utility in `scripts/migrate_sqlite_to_postgres.py` only if you have existing SQLite data that must be retained.
+
+1. Stop the application and background workers so the SQLite file is not changing.
+2. Create a new, empty Neon database. Do not point this at a database that already contains customer or operator data.
+3. On a trusted machine with the repository checked out, install `requirements.txt`, set `DATABASE_URL` in the environment (never in a command argument or source file), and run a dry run:
+   `python scripts/migrate_sqlite_to_postgres.py --sqlite-path ./data/signalforge.db`
+4. Review the source table/row inventory and confirm the destination is the intended empty database.
+5. Apply the transfer:
+   `python scripts/migrate_sqlite_to_postgres.py --sqlite-path ./data/signalforge.db --apply`
+6. The utility creates the current checked-in PostgreSQL schema, refuses to import into a destination containing application rows, backs up the SQLite file beside the original, copies tables in foreign-key dependency order in a transaction, checks row counts, and advances identity sequences.
+7. Verify the copied data and application behavior before switching traffic. Keep the original SQLite file and generated backup offline until the new database has been independently checked.
+
+The default mode is read-only with respect to both databases. `--apply` is intentionally explicit. The tool fails closed on unknown source tables, missing destination columns, unsatisfied required columns, foreign-key cycles, non-empty destination tables, and row-count mismatches. It does not delete or modify the source SQLite database. For an already-running deployment, do not run this against the live database: schedule a maintenance window and take a separate provider backup first.
+
 ## Customer account registration and verification
 
 Customers register on the public home page, receive a one-time verification link by email, click it, then sign in with the same email and password. Verification tokens are stored only as hashes, expire after one hour, and can be used once. A resend endpoint is available for pending accounts. No customer needs GitHub or Codespaces access.
