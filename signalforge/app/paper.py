@@ -140,7 +140,7 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
     if not session_started_at:
         return {
             "session_started_at": None, "active": bool(active), "runtime_seconds": 0,
-            "invested_usd": 0.0, "realized_pnl_usd": 0.0, "unrealized_pnl_usd": 0.0,
+            "invested_usd": 0.0, "realized_pnl_usd": 0.0, "unrealized_pnl_usd": 0.0, "session_profit_usd": 0.0,
             "open_positions": [], "trades": [], "trade_count": 0, "buy_count": 0, "sell_count": 0,
         }
     try:
