@@ -18,6 +18,7 @@ class Settings:
     rate_limit_per_minute: int = 300
     stale_after_seconds: int = 300
     version: str = VERSION
+    database_url: str | None = None
 
 
 def _keys(name: str) -> frozenset:
@@ -31,6 +32,16 @@ def _keys(name: str) -> frozenset:
     return keys
 
 
+def _database_url() -> str | None:
+    """Read the optional hosted PostgreSQL URL without exposing it in settings logs."""
+    value = os.getenv("DATABASE_URL", "").strip()
+    if not value:
+        return None
+    if not value.startswith(("postgres://", "postgresql://")):
+        raise ConfigError("DATABASE_URL must use the postgres:// or postgresql:// scheme")
+    return value
+
+
 def load_settings() -> Settings:
     read_keys = _keys("SIGNALFORGE_READ_KEYS")
     admin_keys = _keys("SIGNALFORGE_ADMIN_KEYS")
@@ -42,4 +53,5 @@ def load_settings() -> Settings:
         admin_api_keys=admin_keys,
         rate_limit_per_minute=int(os.getenv("SIGNALFORGE_RATE_LIMIT_PER_MINUTE", "300")),
         stale_after_seconds=int(os.getenv("SIGNALFORGE_STALE_AFTER_SECONDS", "300")),
+        database_url=_database_url(),
     )
