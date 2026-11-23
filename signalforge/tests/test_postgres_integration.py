@@ -247,3 +247,43 @@ def test_postgres_customer_registration_and_signin_routes(monkeypatch):
         )
         assert login.status_code == 200
         assert client.get("/v1/customer/me").json()["email"] == email
+        csrf = login.json()["csrf_token"]
+
+        wallet = "11111111111111111111111111111111"
+        added_wallet = client.post(
+            "/v1/customer/wallets",
+            headers={"X-CSRF-Token": csrf},
+            json={"wallet_address": wallet, "label": "Postgres route wallet"},
+        )
+        assert added_wallet.status_code == 200
+        assert client.get("/v1/customer/wallets").json()["wallets"][0]["label"] == "Postgres route wallet"
+
+        paper = client.post(
+            "/v1/customer/paper-accounts",
+            headers={"X-CSRF-Token": csrf},
+            json={"starting_capital_usd": 250, "name": "Postgres route paper"},
+        )
+        assert paper.status_code == 201
+        paper_id = paper.json()["paper_account"]["id"]
+        trade = client.post(
+            f"/v1/customer/paper-accounts/{paper_id}/trades",
+            headers={"X-CSRF-Token": csrf},
+            json={"asset_id": "route-test-mint", "side": "buy", "amount_usd": 25, "reference_price": 5},
+        )
+        assert trade.status_code == 201
+
+        secret = "route-private-telegram-token"
+        saved = client.post(
+            "/v1/customer/integrations",
+            headers={"X-CSRF-Token": csrf},
+            json={"provider": "telegram", "credentials": {"bot_token": secret, "chat_id": "12345"}},
+        )
+        assert saved.status_code == 200
+        assert secret not in saved.text
+        assert "encrypted_payload" not in saved.text
+        disconnected = client.delete(
+            "/v1/customer/integrations/telegram",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert disconnected.status_code == 200
+        assert disconnected.json()["disconnected"] is True
