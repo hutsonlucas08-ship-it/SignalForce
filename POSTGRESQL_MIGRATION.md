@@ -1,44 +1,41 @@
-# PostgreSQL migration work plan
+# PostgreSQL migration status
 
-## Current state
+## Current implementation
 
-The application is SQLite-specific today. The database layer in `app/db.py` uses `sqlite3.Connection`, SQLite pragmas, and `executescript`. Application modules also depend on SQLite behavior, including:
+The migration branch now includes an initial dual-backend database layer:
 
-- qmark (`?`) SQL parameters and SQLite row objects;
-- `INSERT OR IGNORE` and `ON CONFLICT` upserts;
-- `cursor.lastrowid`;
-- SQLite `AUTOINCREMENT`, `strftime`, and `substr`;
-- `BEGIN IMMEDIATE` for the paper-bot lease;
-- SQLite migration DDL and schema-migration checksums.
+- SQLite remains the default for local development and existing tests.
+- A PostgreSQL connection adapter uses Psycopg 3 when `DATABASE_URL` is configured.
+- PostgreSQL rows support both mapping access (`row["field"]`) and legacy integer indexing (`row[0]`).
+- Existing qmark SQL parameters are translated safely outside quoted strings.
+- The checked-in SQLite migrations are translated for the SQLite-specific constructs currently present: `AUTOINCREMENT`, `INSERT OR IGNORE`, `COLLATE NOCASE`, and the UTC `strftime` default.
+- Migration checksums are calculated from the original checked-in SQL, not the translated PostgreSQL SQL.
+- The paper-bot lease uses a PostgreSQL row lock when the adapter is active.
+- Runtime inserts in the audited paths use portable `ON CONFLICT DO NOTHING` and `RETURNING id` forms.
 
-Adding a PostgreSQL URL or installing a PostgreSQL driver alone would therefore **not** make this service PostgreSQL-compatible.
+This is an implementation slice, not a production-ready cutover. It has **not** been executed against a live PostgreSQL database, and the full SQLite test suite has not yet been run against this branch in this work session.
 
-## Target deployment (zero-cost tier)
+## Target deployment (zero-cost beta)
 
-- Application: Render free web service, subject to its sleep/cold-start and resource limits.
-- Database: Neon free PostgreSQL, with a pooled connection URL for the web process.
+- Application: Render free web service, subject to sleep/cold-start and resource limits.
+- Database: Neon free PostgreSQL, using a pooled connection URL where appropriate.
 - Public hostname: Cloudflare Worker on `workers.dev`, forwarding to the application origin.
-- No persistent local disk is assumed. All customer state and credentials must live in PostgreSQL.
+- No persistent local disk is assumed. Customer state and encrypted credentials must live in PostgreSQL.
 
-Free-tier quotas, inactivity policies, and availability can change. This design is for a low-volume beta, not a production availability guarantee.
+Free-tier quotas, inactivity policies, and availability can change. This is a low-volume beta architecture, not a production availability guarantee.
 
-## Required implementation sequence
+## Remaining implementation and verification
 
-1. Introduce a small database interface and retain SQLite as the default local/test backend.
-2. Add PostgreSQL connection support using psycopg 3 and explicit dict-row behavior.
-3. Port every migration to PostgreSQL-compatible DDL without editing already-applied SQLite migrations. Keep backend-specific migration directories and checksums.
-4. Audit and port all SQL call sites, especially generated IDs, conflict handling, date expressions, and the paper-bot lease/locking transaction.
-5. Add PostgreSQL integration tests that exercise customer registration, email verification, sessions, tenant isolation, encrypted integrations, paper accounts, positions, trades, and bot state.
-6. Run the existing SQLite suite unchanged to guard local development.
-7. Only after both suites pass, change the Render blueprint to free tier and configure `DATABASE_URL`. Do not remove the SQLite file backend until the production database has been verified.
+1. Complete the audit of every SQL call site and ensure all runtime statements work with both SQLite and PostgreSQL.
+2. Run the full existing SQLite suite unchanged.
+3. Add and run PostgreSQL integration tests for migrations, customer registration, email verification, sessions, tenant isolation, encrypted integrations, paper accounts, positions, trades, and bot state.
+4. Verify migration behavior against a clean Neon database and test restart/redeploy persistence.
+5. Only after the tests pass, configure the Render service with `DATABASE_URL`. Do not point production at PostgreSQL before verification.
+6. If any existing SQLite customer data must be retained, design and test a separate export/import with backup and row-count verification before cutover.
 
 ## Data safety rules
 
 - Never deploy customer accounts against ephemeral SQLite storage.
 - Never run destructive schema changes or automatically copy an existing database without an explicit backup and verification.
 - Keep secrets in the hosting provider's environment-variable store; never commit credentials.
-- Keep real-money trading and signing out of scope. This database migration is for customer accounts and paper-trading records only.
-
-## Current blocker
-
-The existing SQL surface is spread across the core store, paper simulator, paper bot, customer authentication, customer data, and customer integrations. A safe migration must update and test those paths together; a partial connection-string change is not a valid deployment.
+- Keep real-money trading and signing out of scope. This migration is for customer accounts and paper-trading records only.
