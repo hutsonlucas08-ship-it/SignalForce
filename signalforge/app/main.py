@@ -223,6 +223,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def customer_me(session=Depends(require_customer)):
         return {"authenticated": True, "email": session["email"], "expires_at": session["expires_at"]}
 
+    @app.get("/v1/customer/csrf")
+    def customer_csrf(request: Request, session=Depends(require_customer), conn=Depends(get_conn)):
+        """Issue a fresh CSRF token to the same-origin session after a page reload."""
+        token = __import__("secrets").token_urlsafe(32)
+        digest = customer_auth._token_hash(request.cookies.get("sf_customer_session", ""))
+        conn.execute("UPDATE customer_sessions SET csrf_token_hash=? WHERE token_hash=? AND revoked_at IS NULL",
+                     (customer_auth._token_hash(token), digest))
+        conn.commit()
+        return {"csrf_token": token}
+
     @app.post("/v1/customer/logout")
     def customer_logout(request: Request, response: Response, session=Depends(require_customer_write), conn=Depends(get_conn)):
         customer_auth.revoke_customer_session(conn, request.cookies.get("sf_customer_session", ""))
