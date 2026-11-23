@@ -119,7 +119,7 @@ def register_customer_account(conn: sqlite3.Connection, email: str, password: st
     if not isinstance(email, str) or len(email) > 254:
         raise ValueError("Enter a valid email address.")
     normalized = email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", normalized):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
         raise ValueError("Enter a valid email address.")
     password_hash = hash_password(password)
     account_id = uuid.uuid4().hex
