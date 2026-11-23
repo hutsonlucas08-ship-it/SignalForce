@@ -185,6 +185,54 @@ def test_unhandled_errors_do_not_leak_details(monkeypatch):
     assert r.status_code == 500 and "secret" not in r.text
 
 
+def test_helius_status_reports_missing_secret_without_network(monkeypatch):
+    monkeypatch.delenv("HELIUS_API_KEY", raising=False)
+    c, _ = make_client()
+    response = c.get("/v1/integrations/helius/status", headers=h(READ))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is False
+    assert body["healthy"] is False
+    assert body["rpc"]["status"] == "not_configured"
+    assert body["enhanced_transactions"]["status"] == "not_configured"
+
+
+def test_helius_status_checks_both_services_without_returning_secret(monkeypatch):
+    monkeypatch.setenv("HELIUS_API_KEY", "test-helius-secret-that-is-never-returned")
+
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def post(self, *args, **kwargs):
+            return FakeResponse({"jsonrpc": "2.0", "result": "ok", "id": 1})
+        async def get(self, *args, **kwargs):
+            return FakeResponse([])
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", FakeAsyncClient)
+    c, _ = make_client()
+    response = c.get("/v1/integrations/helius/status", headers=h(READ))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is True
+    assert body["healthy"] is True
+    assert body["rpc"] == {"status": "connected", "http_status": 200}
+    assert body["enhanced_transactions"] == {"status": "connected", "http_status": 200}
+    assert "test-helius-secret" not in response.text
+
+
 def test_dashboard_is_served_at_root():
     c, _ = make_client()
     response = c.get("/")
