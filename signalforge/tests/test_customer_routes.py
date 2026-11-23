@@ -118,3 +118,14 @@ def test_customer_paper_trade_api_is_csrf_protected_and_account_scoped():
     assert buy.json()["trade"]["quantity"] == 10
     assert client_b.get(f"/v1/customer/paper-accounts/{paper['id']}/positions").status_code == 404
     assert client_a.get(f"/v1/customer/paper-accounts/{paper['id']}/positions").json()["positions"][0]["quantity"] == 10
+
+
+def test_customer_can_refresh_csrf_after_session_cookie_survives_reload():
+    client = _client()
+    _register_and_activate(client, "csrf@example.test")
+    _login(client, "csrf@example.test")
+    fresh = client.get("/v1/customer/csrf")
+    assert fresh.status_code == 200
+    wallet = client.post("/v1/customer/wallets", headers={"X-CSRF-Token": fresh.json()["csrf_token"]},
+                         json={"wallet_address": "11111111111111111111111111111111"})
+    assert wallet.status_code == 200
