@@ -124,7 +124,9 @@ button:focus-visible,a:focus-visible{outline:2px solid #79b8ff;outline-offset:2p
 /* Token artwork fallbacks and position identity */
 .token-fallback{display:inline-grid;place-items:center;background:linear-gradient(145deg,#24463e,#172c3a);color:#bcebd6;font-size:10px;font-weight:800;letter-spacing:.04em;border:1px solid #35584d}.bot-position-identity{display:flex;align-items:center;gap:11px;min-width:0}.bot-token-art{width:42px;height:42px;flex:0 0 42px;object-fit:cover;border-radius:11px;border:1px solid #344a55;background:#172630}.bot-position-symbol a{color:#82d8b4;text-decoration:none;font-weight:700}.bot-position-symbol a:hover{text-decoration:underline}
 .selected-token-head{display:flex;align-items:center;gap:13px;min-width:0}.selected-token-head .bot-token-art{width:54px;height:54px;flex-basis:54px}.selected-token-head>div{min-width:0}
-\n#paperAccounts{grid-template-columns:repeat(auto-fit,minmax(145px,1fr))}\n</style>
+
+#paperAccounts{grid-template-columns:repeat(auto-fit,minmax(145px,1fr))}
+</style>
 </head>
 <body>
 <div class="shell">
@@ -181,7 +183,7 @@ button:focus-visible,a:focus-visible{outline:2px solid #79b8ff;outline-offset:2p
      <li>Open <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">Telegram BotFather</a> and create a bot with <code>/newbot</code>.</li>
      <li>Copy the bot token. Keep it private.</li>
      <li>Open your new bot in Telegram and press Start or send it a message.</li>
-     <li>Add the token as Codespaces secret <code>TELEGRAM_BOT_TOKEN</code>. Send your bot a message, then use Telegram <code>getUpdates</code> to find your numeric <code>chat.id</code>; save it as <code>TELEGRAM_CHAT_ID</code>.</li>
+     <li>Add the token as Codespaces secret <code>TELEGRAM_BOT_TOKEN</code>. Send your bot a message, then in the Codespaces terminal run <code>curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"</code> and copy the numeric <code>chat.id</code> from your message; save it as <code>TELEGRAM_CHAT_ID</code>.</li>
      <li>Restart the SignalForge server, then send a test alert here.</li>
     </ol>
    </div>
