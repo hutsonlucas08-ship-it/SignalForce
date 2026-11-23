@@ -128,7 +128,7 @@ def test_sync_once_paginates_until_previous_checkpoint(tmp_path):
                 self.calls = []
             async def get(self, url, params):
                 self.calls.append(dict(params))
-                payload = [newest, middle, checkpoint] if "before-signature" not in params else []
+                payload = [newest, middle] if "before-signature" not in params else [checkpoint]
                 return httpx.Response(200, request=httpx.Request("GET", url), json=payload)
 
         fake = PagedHelius()
