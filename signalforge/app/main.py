@@ -606,10 +606,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                              "description":x.get("description"),"type":x.get("type"),
                              "source":x.get("source"),"token_transfers":x.get("tokenTransfers") or [],
                              "native_transfers":x.get("nativeTransfers") or []} for x in rows]
-            if rows:
-                conn.execute("UPDATE tracked_wallets SET last_signature=?,last_seen_at=? WHERE wallet_address=?",
-                             (rows[0].get("signature"),utcnow(),wallet))
-                conn.commit()
             return {"configured":True,"wallet":wallet,"transactions":transactions,
                     "note":"Parsed public on-chain swap history. This is not a verified profit leaderboard; token price history and complete position accounting are required before ranking wallet performance."}
         except httpx.HTTPError:
