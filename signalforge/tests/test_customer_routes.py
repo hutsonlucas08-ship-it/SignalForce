@@ -99,3 +99,22 @@ def test_customer_session_logout_revokes_cookie_session():
     csrf = _login(client, "logout@example.test")
     assert client.post("/v1/customer/logout", headers={"X-CSRF-Token": csrf}).status_code == 200
     assert client.get("/v1/customer/me").status_code == 401
+
+
+def test_customer_paper_trade_api_is_csrf_protected_and_account_scoped():
+    client_a, client_b = _client(), _client()
+    _register_and_activate(client_a, "trade-a@example.test")
+    _register_and_activate(client_b, "trade-b@example.test")
+    csrf_a, csrf_b = _login(client_a, "trade-a@example.test"), _login(client_b, "trade-b@example.test")
+    paper = client_a.post("/v1/customer/paper-accounts", headers={"X-CSRF-Token": csrf_a},
+                          json={"starting_capital_usd": 100}).json()["paper_account"]
+    denied = client_a.post(f"/v1/customer/paper-accounts/{paper['id']}/trades",
+                           json={"asset_id": "mint", "side": "buy", "amount_usd": 20, "reference_price": 2})
+    assert denied.status_code == 403
+    buy = client_a.post(f"/v1/customer/paper-accounts/{paper['id']}/trades",
+                        headers={"X-CSRF-Token": csrf_a},
+                        json={"asset_id": "mint", "side": "buy", "amount_usd": 20, "reference_price": 2})
+    assert buy.status_code == 201
+    assert buy.json()["trade"]["quantity"] == 10
+    assert client_b.get(f"/v1/customer/paper-accounts/{paper['id']}/positions").status_code == 404
+    assert client_a.get(f"/v1/customer/paper-accounts/{paper['id']}/positions").json()["positions"][0]["quantity"] == 10
