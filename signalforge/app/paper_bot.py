@@ -365,7 +365,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
     per_trade = min(equity * POSITION_EQUITY_FRACTION, account["cash_balance"])
     entries = []
     for score, mint, pair, signal, market_score in candidates:
-        if count >= MAX_OPEN_POSITIONS or per_trade < 10:
+        if count >= MAX_OPEN_POSITIONS or per_trade < 1:
             break
         price = prices.get(mint)
         if not price:
