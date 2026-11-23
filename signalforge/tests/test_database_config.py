@@ -40,3 +40,14 @@ def test_database_url_rejects_non_postgres_schemes(monkeypatch, url):
 
     with pytest.raises(ConfigError, match="DATABASE_URL must use"):
         load_settings()
+
+
+
+def test_render_requires_postgres_url_instead_of_ephemeral_sqlite(monkeypatch):
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("SIGNALFORGE_READ_KEYS", "")
+    monkeypatch.setenv("SIGNALFORGE_ADMIN_KEYS", "")
+
+    with pytest.raises(ConfigError, match="DATABASE_URL is required on Render"):
+        load_settings()
