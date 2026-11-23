@@ -502,3 +502,24 @@ def test_paper_session_endpoint_reports_only_latest_session():
     assert body["trade_count"] == 0
     assert body["open_positions"] == []
     assert body["session_started_at"]
+
+
+def test_paper_live_prices_returns_empty_without_calling_market_provider(monkeypatch):
+    client, _ = make_client()
+
+    async def unexpected_fetch(*args, **kwargs):
+        raise AssertionError("No market request should be made without open positions")
+
+    monkeypatch.setattr("app.main.paper_bot._fetch_pairs", unexpected_fetch)
+    response = client.get("/v1/paper/live-prices", headers=h(READ))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prices"] == {}
+    assert body["position_count"] == 0
+    assert body["source"] == "DexScreener"
+
+
+def test_paper_live_prices_requires_read_authentication():
+    client, _ = make_client()
+    assert client.get("/v1/paper/live-prices").status_code == 401
