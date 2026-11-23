@@ -634,10 +634,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         seen = set()
         added = 0
         duplicates = 0
+        invalid_count = 0
         invalid = []
         for raw_address in body.wallet_addresses:
             address = raw_address.strip()
             if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
+                invalid_count += 1
                 if len(invalid) < 20:
                     invalid.append(address[:80])
                 continue
@@ -659,7 +661,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "unique_valid_count": len(seen),
             "added_count": added,
             "duplicate_count": duplicates,
-            "invalid_count": len(body.wallet_addresses) - len(seen) - duplicates,
+            "invalid_count": invalid_count,
             "invalid_addresses": invalid,
         }
 
