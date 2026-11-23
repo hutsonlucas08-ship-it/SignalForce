@@ -48,7 +48,7 @@ def translate_migration_sql(sql: str, migration_name: str = "") -> str:
     translated = "".join(pieces)
     if has_nocase and migration_name == "013_customer_identity_foundation.sql":
         translated += (
-            "\\nCREATE UNIQUE INDEX IF NOT EXISTS idx_customer_accounts_email_lower "
-            "ON customer_accounts (LOWER(email));\\n"
+             "\nCREATE UNIQUE INDEX IF NOT EXISTS idx_customer_accounts_email_lower "
+            "ON customer_accounts (LOWER(email));\n"
         )
     return translated
