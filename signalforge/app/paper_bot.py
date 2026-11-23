@@ -493,8 +493,8 @@ def configure_bot(conn, enabled=None, allocated_capital_usd=None, duration_secon
                 raise ValueError("Choose a run duration of 15 minutes, 30 minutes, 1 hour, 2 hours, or 4 hours")
             started = datetime.now(timezone.utc)
             ends = started + timedelta(seconds=duration_seconds)
-            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,run_stopped_at=NULL,session_seconds=?,last_error=NULL WHERE id=1",
-                         (started.strftime("%Y-%m-%dT%H:%M:%SZ"),ends.strftime("%Y-%m-%dT%H:%M:%SZ"),duration_seconds))
+            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,run_stopped_at=NULL,run_session_id=?,session_seconds=?,last_error=NULL WHERE id=1",
+                         (started.strftime("%Y-%m-%dT%H:%M:%SZ"),ends.strftime("%Y-%m-%dT%H:%M:%SZ"),uuid.uuid4().hex,duration_seconds))
         else:
             conn.execute("UPDATE paper_bot_state SET enabled=0,run_until=NULL,run_stopped_at=? WHERE id=1",(utcnow(),))
     conn.commit()
