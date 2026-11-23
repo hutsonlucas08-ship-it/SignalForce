@@ -184,6 +184,7 @@ def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUT
 
 def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None):
     paper.ensure_accounts(conn)
+    session_id = _state(conn).get("run_session_id")
     account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
     open_rows = conn.execute("SELECT * FROM paper_positions WHERE account_id=?",(account["id"],)).fetchall()
     positions = {r["asset_id"]: r for r in open_rows}
@@ -238,7 +239,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             sold = paper.place_order(
                 conn, "automatic", mint, pos["token_name"], "sell",
                 pos["quantity"] * fraction * price, price,
-                "Automatic paper exit: " + decision.reason,
+                "Automatic paper exit: " + decision.reason, session_id=session_id,
             )
         except ValueError as exc:
             log.warning("Paper exit blocked for %s: %s", mint[:8], exc)
@@ -295,7 +296,8 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
         try:
             result = paper.place_order(conn, "automatic", mint, names.get(mint) or (pair.get("baseToken") or {}).get("name"),
                                        "buy", per_trade, price,
-                                       "Combined smart-money + momentum entry; score %.1f; %d tracked wallets bought in last %d minutes; market and launch-health filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES))
+                                       "Combined smart-money + momentum entry; score %.1f; %d tracked wallets bought in last %d minutes; market and launch-health filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES),
+                                       session_id=session_id)
             position_track.forget(conn, mint)
             position_track.observe(conn, mint, result["fill_price"], price, _liquidity_usd(pair))
             entries.append({"asset_id": mint, "score": score, "market_score": market_score, "wallet_count": signal["wallet_count"], "buy_count": signal["buy_count"], "latest_buy_at": signal["latest_buy_at"], "trade_id": result["trade_id"]})
