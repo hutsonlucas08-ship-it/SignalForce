@@ -274,7 +274,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/v1/admin/customers/activate")
     def activate_customer(body: CustomerActivateRequest, _: Principal = Depends(require_admin), conn=Depends(get_conn)):
-        cursor = conn.execute("UPDATE customer_accounts SET status='active', email_verified_at=?, updated_at=? WHERE email=? COLLATE NOCASE AND status='pending'",
+        cursor = conn.execute("UPDATE customer_accounts SET status='active', email_verified_at=?, updated_at=? WHERE LOWER(email)=LOWER(?) AND status='pending'",
                               (utcnow(), utcnow(), body.email.strip()))
         conn.commit()
         if cursor.rowcount != 1:
@@ -1097,7 +1097,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 continue
             seen.add(address)
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+                "INSERT INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                 (address, address[:6] + "…" + address[-4:], utcnow()),
             )
             if cursor.rowcount:
