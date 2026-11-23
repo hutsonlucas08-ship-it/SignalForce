@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import store
-from .auth import Principal, RateLimiter, require_admin, require_read
+from .auth import Principal, RateLimiter, _fp, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from .risk import RiskSnapshot, assess_risk
@@ -136,10 +136,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/v1/auth/status")
     def auth_status():
-        """Safe connection diagnostic; reports key configuration counts, never key values."""
+        """Safe connection diagnostic; exposes short one-way fingerprints, never key values."""
         return {
             "read_key_configured": bool(settings.read_api_keys),
             "read_key_count": len(settings.read_api_keys),
+            "read_key_fingerprints": sorted(_fp(key) for key in settings.read_api_keys),
             "admin_key_configured": bool(settings.admin_api_keys),
             "admin_key_count": len(settings.admin_api_keys),
         }
