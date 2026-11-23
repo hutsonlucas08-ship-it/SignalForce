@@ -60,3 +60,17 @@ def test_hybrid_row_supports_mapping_and_sqlite_integer_indexes():
     assert row["email"] == "trader@example.test"
     assert row[0] == 7
     assert dict(row) == {"id": 7, "email": "trader@example.test"}
+
+
+
+def test_all_checked_in_migrations_translate_known_sqlite_syntax():
+    from pathlib import Path
+
+    migrations = Path(__file__).parents[1] / "app" / "migrations"
+    for migration in sorted(migrations.glob("*.sql")):
+        translated = translate_migration_sql(migration.read_text(), migration.name)
+        upper = translated.upper()
+        assert "AUTOINCREMENT" not in upper, migration.name
+        assert "INSERT OR IGNORE" not in upper, migration.name
+        assert "COLLATE NOCASE" not in upper, migration.name
+        assert "STRFTIME(" not in upper, migration.name
