@@ -323,3 +323,26 @@ def test_viewing_wallet_activity_does_not_advance_ingestion_checkpoint(monkeypat
 
     wallets = c.get("/v1/copytraders/wallets", headers=h(READ)).json()["wallets"]
     assert wallets[0]["last_signature"] is None
+
+
+def test_helius_worker_status_distinguishes_configured_from_running(monkeypatch):
+    monkeypatch.setenv("HELIUS_API_KEY", "test-key")
+    c, app = make_client()
+    response = c.get("/v1/integrations/helius/worker-status", headers=h(READ))
+    assert response.status_code == 200
+    body = response.json()
+    # In-memory test apps intentionally do not start background workers.
+    assert body["configured"] is True
+    assert body["worker_state"] == "not_started"
+    assert body["worker_running"] is False
+    assert body["tracked_wallet_count"] == 0
+    assert body["last_success_at"] is None
+
+
+def test_helius_worker_status_reports_disabled_without_secret(monkeypatch):
+    monkeypatch.delenv("HELIUS_API_KEY", raising=False)
+    c, _ = make_client()
+    body = c.get("/v1/integrations/helius/worker-status", headers=h(READ)).json()
+    assert body["configured"] is False
+    assert body["worker_state"] == "disabled"
+    assert body["worker_running"] is False
