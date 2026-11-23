@@ -48,7 +48,7 @@ def _activity(conn, account_id, kind, message, details):
         (account_id,kind,message,json.dumps(details,separators=(",",":")),utcnow()))
 
 
-def place_order(conn, strategy, asset_id, token_name, side, amount_usd, reference_price, reason):
+def place_order(conn, strategy, asset_id, token_name, side, amount_usd, reference_price, reason, session_id=None):
     if strategy not in ("automatic","approval") or side not in ("buy","sell"):
         raise ValueError("Invalid strategy or side")
     if not isinstance(asset_id,str) or not asset_id.strip() or len(asset_id)>128:
@@ -129,7 +129,7 @@ def activity(conn, strategy=None, limit=100):
 
 
 
-def session_overview(conn, session_started_at, session_stopped_at=None, active=False):
+def session_overview(conn, session_started_at, session_stopped_at=None, active=False, session_id=None):
     """Return only executions and positions belonging to the latest timed session."""
     ensure_accounts(conn)
     account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
@@ -147,13 +147,22 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
     except (TypeError, ValueError):
         runtime_seconds = 0
 
+    if session_id:
+        trade_filter = "account_id=? AND session_id=?"
+        trade_params = (account["id"], session_id)
+        position_buy_filter = "account_id=? AND session_id=? AND side='buy'"
+        position_buy_params = (account["id"], session_id)
+    else:
+        trade_filter = "account_id=? AND created_at>=?"
+        trade_params = (account["id"], session_started_at)
+        position_buy_filter = "account_id=? AND created_at>=? AND side='buy'"
+        position_buy_params = (account["id"], session_started_at)
     trades = [dict(row) for row in conn.execute(
         """SELECT id, asset_id, token_name, side, quantity, reference_price, fill_price,
                   gross_usd, fee_usd, realized_pnl_usd, reason, created_at
-           FROM paper_trades
-           WHERE account_id=? AND created_at>=?
+           FROM paper_trades WHERE """ + trade_filter + """
            ORDER BY created_at DESC, id DESC LIMIT 200""",
-        (account["id"], session_started_at),
+        trade_params,
     ).fetchall()]
     invested = sum(float(t["gross_usd"] or 0) + float(t["fee_usd"] or 0)
                    for t in trades if t["side"] == "buy")
@@ -165,17 +174,17 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
            FROM paper_positions
            WHERE account_id=? AND (
                opened_at>=? OR asset_id IN (
-                   SELECT DISTINCT asset_id FROM paper_trades
-                   WHERE account_id=? AND created_at>=? AND side='buy'
+                   SELECT DISTINCT asset_id FROM paper_trades WHERE """ + position_buy_filter + """
                )
            )
            ORDER BY opened_at DESC""",
-        (account["id"], session_started_at, account["id"], session_started_at),
+        (account["id"], session_started_at, *position_buy_params),
     ).fetchall()]
     unrealized = sum((float(p["last_price"]) - float(p["avg_entry_price"])) * float(p["quantity"])
                      for p in positions)
     return {
         "session_started_at": session_started_at,
+        "session_id": session_id,
         "active": bool(active),
         "runtime_seconds": runtime_seconds,
         "invested_usd": round(invested, 2),
