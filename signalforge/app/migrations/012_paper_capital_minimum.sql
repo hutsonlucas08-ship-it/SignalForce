@@ -3,7 +3,7 @@
 CREATE TABLE paper_bot_state_new (
     id INTEGER PRIMARY KEY CHECK(id=1),
     enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
-    allocated_capital_usd REAL NOT NULL DEFAULT 1000 CHECK(allocated_capital_usd>=50),
+    allocated_capital_usd REAL NOT NULL DEFAULT 1000 CHECK(allocated_capital_usd>=5),
     started_at TEXT,
     heartbeat_at TEXT,
     last_scan_at TEXT,
