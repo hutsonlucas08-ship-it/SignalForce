@@ -236,6 +236,82 @@ def test_helius_status_checks_both_services_without_returning_secret(monkeypatch
     assert "test-helius-secret" not in response.text
 
 
+def test_geckoterminal_new_launches_returns_token_artwork(monkeypatch):
+    from app import main
+    main._launch_cache.clear()
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "data": [{
+                    "id": "solana_pool123",
+                    "attributes": {
+                        "pool_created_at": "2026-11-22T20:00:00Z",
+                        "base_token_price_usd": "0.0001",
+                        "reserve_in_usd": "25000",
+                        "volume_usd": {"h24": "12000"},
+                    },
+                    "relationships": {
+                        "base_token": {"data": {"id": "solana_mint123"}},
+                        "dex": {"data": {"id": "raydium"}},
+                    },
+                }],
+                "included": [{
+                    "id": "solana_mint123",
+                    "type": "token",
+                    "attributes": {
+                        "address": "MintAddress123",
+                        "name": "Example Coin",
+                        "symbol": "EX",
+                        "image_url": "https://images.example/token.png",
+                    },
+                }],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def get(self, url, **kwargs):
+            assert "geckoterminal.com" in url
+            assert kwargs["params"]["include"] == "base_token,quote_token,dex"
+            return FakeResponse()
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", FakeAsyncClient)
+    c, _ = make_client()
+    response = c.get("/v1/research/new-launches", headers=h(READ))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"].startswith("GeckoTerminal")
+    assert body["launches"][0]["asset_id"] == "MintAddress123"
+    assert body["launches"][0]["image_url"] == "https://images.example/token.png"
+    assert body["launches"][0]["liquidity_usd"] == "25000"
+
+
+def test_geckoterminal_new_launches_requires_read_auth():
+    c, _ = make_client()
+    assert c.get("/v1/research/new-launches").status_code == 401
+
+
+def test_trending_now_uses_local_tokens_and_dexscreener_only(monkeypatch):
+    from app import main, paper_bot
+    c, _ = make_client()
+    # Empty local discovery is an honest empty state and does not call Pump.fun.
+    monkeypatch.setattr(
+        paper_bot, "_pumpfun_discoveries",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Pump.fun must not be called")),
+    )
+    response = c.get("/v1/research/trending-now", headers=h(READ))
+    assert response.status_code == 200
+    assert response.json()["candidates"] == []
+    assert response.json()["source"] == "DEX Screener market data"
+
+
 def test_dashboard_is_served_at_root():
     c, _ = make_client()
     response = c.get("/")
