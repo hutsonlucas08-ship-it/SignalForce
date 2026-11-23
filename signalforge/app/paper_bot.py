@@ -21,7 +21,7 @@ INTERVAL_SECONDS = 60.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
 MIN_DISTINCT_WALLET_BUYS = 2
 SINGLE_WALLET_MIN_MARKET_SCORE = 75.0
-LEASE_SECONDS = 12.0
+LEASE_SECONDS = 90.0
 MIN_LIQUIDITY_USD = 15000.0
 MIN_VOLUME_5M_USD = 3000.0
 MIN_BUYS_5M = 15
@@ -302,7 +302,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
     try:
         _state(conn)
         _set_status(conn, started_at=utcnow())
-        async with httpx.AsyncClient(timeout=3.5, headers={"Accept":"application/json"}) as client:
+        async with httpx.AsyncClient(timeout=8.0, headers={"Accept":"application/json"}) as client:
             while not stop_event.is_set():
                 cycle_started = time.monotonic()
                 try:
@@ -328,7 +328,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                         outcome = _trade_decisions(conn, assets, pairs, approved_mints=approved_mints)
                         for trade in outcome.get("entries", []):
                             pair = pairs.get(trade["asset_id"], {})
-                            token = (pair.get("baseToken") or {}).get("name") or pump_names.get(trade["asset_id"]) or trade["asset_id"][:8]
+                            token = (pair.get("baseToken") or {}).get("name") or trade["asset_id"][:8]
                             await _telegram_send(client, "SIGNALFORGE PAPER BUY\n" + token + "\nEntry: $" + str(pair.get("priceUsd") or "n/a") + "\nScore: " + str(trade["score"]) + "/100\nNo real funds moved.")
                         for trade in outcome.get("exits", []):
                             await _telegram_send(client, "SIGNALFORGE PAPER SELL\n" + str(trade.get("token_name") or trade["asset_id"][:8]) + "\nExit reference: $" + str(trade["reference_price"]) + "\nRealized paper P&L: $" + str(round(trade["realized_pnl_usd"],2)) + "\nNo real funds moved.")
@@ -375,7 +375,7 @@ def bot_status(conn):
         "last_error": state["last_error"],
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
-                        "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
+                        "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"smart_money_lookback_minutes":SMART_MONEY_LOOKBACK_MINUTES,"minimum_distinct_wallet_buys":MIN_DISTINCT_WALLET_BUYS,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
         "strategy": "combined_smart_money_momentum",
         "smart_money_lookback_minutes": SMART_MONEY_LOOKBACK_MINUTES,
         "minimum_distinct_wallet_buys": MIN_DISTINCT_WALLET_BUYS,
