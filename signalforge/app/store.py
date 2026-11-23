@@ -47,7 +47,7 @@ def set_halt(conn, halted: bool, reason: str, actor: str) -> dict:
 
 
 def register_source(conn, name: str, kind: str) -> None:
-    conn.execute("INSERT OR IGNORE INTO data_sources (name, kind) VALUES (?, ?)", (name, kind))
+    conn.execute("INSERT INTO data_sources (name, kind) VALUES (?, ?) ON CONFLICT DO NOTHING", (name, kind))
     conn.commit()
 
 
@@ -116,7 +116,7 @@ def add_observation(
             observed_at,
             collected_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
         """,
         (
             source,
@@ -129,7 +129,7 @@ def add_observation(
         ),
     )
     conn.commit()
-    return cursor.lastrowid
+    return cursor.fetchone()["id"]
 
 
 def get_observations(
