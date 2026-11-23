@@ -2,6 +2,8 @@
 import os
 from dataclasses import dataclass, field
 
+from cryptography.fernet import Fernet
+
 MIN_KEY_LENGTH = 24
 VERSION = "0.1.0"
 
@@ -52,6 +54,22 @@ def load_settings() -> Settings:
         raise ConfigError(
             "DATABASE_URL is required on Render. Refusing to start with ephemeral SQLite storage."
         )
+    if os.getenv("RENDER_SERVICE_ID"):
+        encryption_key = os.getenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", "").strip()
+        if not encryption_key:
+            raise ConfigError(
+                "SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY is required on Render to protect customer integrations."
+            )
+        try:
+            Fernet(encryption_key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise ConfigError(
+                "SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY must be a valid Fernet key."
+            ) from exc
+        if os.getenv("SIGNALFORGE_COOKIE_SECURE", "true").strip().lower() == "false":
+            raise ConfigError(
+                "SIGNALFORGE_COOKIE_SECURE must remain true on Render."
+            )
     return Settings(
         db_path=os.getenv("SIGNALFORGE_DB_PATH", "./data/signalforge.db"),
         read_api_keys=read_keys,
