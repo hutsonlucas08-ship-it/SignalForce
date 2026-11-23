@@ -545,6 +545,101 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except httpx.HTTPError:
             raise HTTPException(status_code=502, detail="Helius wallet history is temporarily unavailable")
 
+    @app.get("/v1/smart-money/overlap")
+    def smart_money_overlap(
+        hours_back: int = 24,
+        minimum_wallets: int = 2,
+        limit: int = 50,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        """Show mints bought by multiple tracked wallets in the selected window."""
+        from .smart_money import find_wallet_overlap
+        if hours_back < 1 or hours_back > 168:
+            raise HTTPException(status_code=422, detail="hours_back must be between 1 and 168")
+        if minimum_wallets < 2 or minimum_wallets > 50:
+            raise HTTPException(status_code=422, detail="minimum_wallets must be between 2 and 50")
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+        rows = conn.execute(
+            "SELECT wallet_address, signature, mint, token_name, token_symbol, side, "
+            "price_usd, market_cap_usd, occurred_at, source "
+            "FROM wallet_trade_events WHERE side='buy' "
+            "AND occurred_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now', ?) "
+            "ORDER BY occurred_at DESC LIMIT 10000",
+            (f"-{hours_back} hours",),
+        ).fetchall()
+        overlaps = find_wallet_overlap([dict(row) for row in rows], minimum_wallets)
+        return {
+            "overlaps": overlaps[:limit],
+            "window_hours": hours_back,
+            "minimum_wallets": minimum_wallets,
+            "trades_scanned": len(rows),
+            "source": "stored wallet trade observations",
+            "note": "Only ingested and timestamped BUY events are counted. An empty result does not prove that no wallets are buying.",
+        }
+
+    @app.get("/v1/smart-money/tokens/{mint}/summary")
+    def smart_money_token_summary(
+        mint: str,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        """Summarize tracked wallet entries and observed token price multiples."""
+        from .smart_money import summarize_token
+        if not mint.strip() or len(mint) > 128:
+            raise HTTPException(status_code=422, detail="Invalid token mint")
+        trades = conn.execute(
+            "SELECT wallet_address, signature, mint, token_name, token_symbol, side, "
+            "token_amount, sol_amount, usd_amount, price_usd, market_cap_usd, "
+            "occurred_at, source FROM wallet_trade_events WHERE mint=? "
+            "ORDER BY occurred_at ASC LIMIT 10000",
+            (mint,),
+        ).fetchall()
+        prices = conn.execute(
+            "SELECT price_usd, market_cap_usd, observed_at, source "
+            "FROM token_price_observations WHERE mint=? ORDER BY observed_at ASC LIMIT 10000",
+            (mint,),
+        ).fetchall()
+        result = summarize_token([dict(row) for row in trades], [dict(row) for row in prices])
+        result.update({
+            "mint": mint,
+            "token_name": next((row["token_name"] for row in trades if row["token_name"]), None),
+            "token_symbol": next((row["token_symbol"] for row in trades if row["token_symbol"]), None),
+            "trade_count": len(trades),
+            "price_source_count": len({row["source"] for row in prices}),
+        })
+        return result
+
+    @app.get("/v1/smart-money/wallet-rankings")
+    def smart_money_wallet_rankings(
+        leaderboard: str = "daily_pnl",
+        limit: int = 50,
+        _: Principal = Depends(require_read),
+        conn=Depends(get_conn),
+    ):
+        """Return the latest stored daily, weekly, or callout leaderboard snapshot."""
+        if leaderboard not in {"daily_pnl", "weekly_pnl", "callout"}:
+            raise HTTPException(status_code=422, detail="leaderboard must be daily_pnl, weekly_pnl, or callout")
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
+        rows = conn.execute(
+            "SELECT r.wallet_address, w.label, r.leaderboard, r.rank, r.pnl_sol, "
+            "r.observed_at, r.source FROM wallet_leaderboard_snapshots r "
+            "LEFT JOIN tracked_wallets w ON w.wallet_address=r.wallet_address "
+            "WHERE r.leaderboard=? AND r.observed_at=("
+            "SELECT MAX(r2.observed_at) FROM wallet_leaderboard_snapshots r2 "
+            "WHERE r2.leaderboard=r.leaderboard) "
+            "ORDER BY CASE WHEN r.rank IS NULL THEN 1 ELSE 0 END, r.rank ASC LIMIT ?",
+            (leaderboard, limit),
+        ).fetchall()
+        return {
+            "leaderboard": leaderboard,
+            "wallets": [dict(row) for row in rows],
+            "count": len(rows),
+            "note": "These are stored source snapshots. No leaderboard is represented as current until a fresh source snapshot has been ingested.",
+        }
+
     @app.get("/v1/telegram/status")
     def telegram_status(_: Principal = Depends(require_read)):
         return telegram_alerts.status()
