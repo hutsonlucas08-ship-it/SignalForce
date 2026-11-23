@@ -892,6 +892,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def paper_overview(_: Principal = Depends(require_read), conn=Depends(get_conn)):
         return paper.overview(conn)
 
+    @app.get("/v1/paper/session")
+    def paper_session(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        state = paper_bot._state(conn)
+        return paper.session_overview(
+            conn,
+            state.get("run_started_at"),
+            state.get("run_stopped_at"),
+            bool(state.get("enabled")),
+        )
+
     @app.post("/v1/paper/orders")
     def paper_order(body: PaperOrderRequest, _: Principal = Depends(require_read), conn=Depends(get_conn)):
         try:
