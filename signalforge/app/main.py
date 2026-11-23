@@ -192,16 +192,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         host = request.client.host if request.client else "unknown"
         app.state.customer_auth_limiter.check(action + ":" + host)
 
-    @app.post("/v1/customer/register", status_code=202)
+    @app.post("/v1/customer/register", status_code=201)
     def customer_register(body: CustomerRegisterRequest, request: Request, conn=Depends(get_conn)):
+        """Create a beta customer account. Email verification is not enabled yet."""
         customer_rate_limit(request, "register")
         try:
-            customer_auth.register_customer_account(conn, body.email, body.password)
+            account_id = customer_auth.register_customer_account(conn, body.email, body.password)
         except customer_auth.CustomerAuthError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        return {"status": "pending_activation", "message": "Your account request was received. Sign-in becomes available after account activation."}
+        return {"status": "active", "account_id": account_id,
+                "message": "Account created. Sign in with this email and password."}
 
     @app.post("/v1/customer/login")
     def customer_login(body: CustomerLoginRequest, request: Request, response: Response, conn=Depends(get_conn)):
