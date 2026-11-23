@@ -47,6 +47,11 @@ def load_settings() -> Settings:
     admin_keys = _keys("SIGNALFORGE_ADMIN_KEYS")
     if read_keys & admin_keys:
         raise ConfigError("A key cannot be both a read key and an admin key")
+    database_url = _database_url()
+    if os.getenv("RENDER_SERVICE_ID") and not database_url:
+        raise ConfigError(
+            "DATABASE_URL is required on Render. Refusing to start with ephemeral SQLite storage."
+        )
     return Settings(
         db_path=os.getenv("SIGNALFORGE_DB_PATH", "./data/signalforge.db"),
         read_api_keys=read_keys,
