@@ -137,6 +137,57 @@ button:focus-visible,a:focus-visible{outline:2px solid #79b8ff;outline-offset:2p
 <main class="main" id="overview"><nav class="mobile-nav" aria-label="Dashboard sections"><a href="#overview">Overview</a><a href="#trending">Market Pulse</a><a href="#newLaunches">New Launches</a><a href="#analyst">Asset Intelligence</a><a href="#paper">Paper Desk</a><a href="#sources">Infrastructure</a><a href="#guardrails">Risk & Methodology</a></nav>
  <header class="topbar"><div><div class="eyebrow">Solana research / workspace</div><h1>Command Center</h1></div><div class="actions"><span class="key-state" id="keyState">API key not connected</span><button class="btn" id="connectBtn">Connect API</button><button class="btn primary" id="refreshBtn">↻ Refresh</button></div></header>
  <section class="welcome"><div><div class="eyebrow">SIGNALFORGE INTELLIGENCE</div><h2 id="welcomeTitle">See the signal. Understand the risk.</h2><p>One organized workspace for token discovery, evidence-based research, and paper-trading evaluation.</p></div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill" id="healthPill">● Checking system</span></div></section>
+ <div class="section-kicker">PAPER TRADING · SIMULATION</div>
+ <section class="panel" id="paper" style="margin-bottom:15px">
+  <div class="panelhead"><div><h3>PAPER DESK</h3><p>Automated strategy simulation · no real funds or wallet signing</p></div><div style="display:flex;align-items:center;gap:8px"><span class="dot" id="botLiveDot"></span><strong id="botStatus">STOPPED</strong></div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px">
+   <div class="metric" style="padding:15px">
+    <div class="eyebrow">SESSION CONFIGURATION</div>
+    <label for="botCapital" style="display:block;margin:12px 0 6px">Virtual starting capital (USD)</label>
+    <input id="botCapital" type="number" min="50" max="100000" step="1" value="1000" inputmode="decimal" style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit">
+    <small class="notice" style="display:block;margin:6px 0 12px">Choose $50–$100,000. Your amount is applied when you start a new session.</small>
+    <label for="botDuration" style="display:block;margin:8px 0 6px">Session duration</label>
+    <select id="botDuration" style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit">
+     <option value="900">15 minutes</option><option value="1800" selected>30 minutes</option><option value="3600">1 hour</option><option value="7200">2 hours</option><option value="14400">4 hours</option>
+    </select>
+    <button class="btn primary" id="botToggle" style="width:100%;margin-top:14px">▶ START SESSION</button>
+    <p id="botMessage" class="notice" style="margin-top:10px">Connect the API to configure the paper engine.</p>
+   </div>
+   <div class="metric" style="padding:15px">
+    <div class="eyebrow">SESSION TELEMETRY</div>
+    <div class="detailgrid" style="margin-top:12px">
+     <div class="metric"><small>RUNTIME</small><strong id="botRuntime">—</strong></div>
+     <div class="metric"><small>TIME REMAINING</small><strong id="botRemaining">SESSION STOPPED</strong></div>
+     <div class="metric"><small>LAST SCAN</small><strong id="botLastScan">—</strong></div>
+     <div class="metric"><small>WORKER</small><strong id="botHeartbeat">Heartbeat —</strong></div>
+    </div>
+    <p id="botRules" class="notice" style="margin-top:12px">Strategy rules load after connecting.</p>
+   </div>
+  </div>
+  <div class="section-kicker" style="margin-top:18px">SESSION PERFORMANCE</div>
+  <div class="stats" id="paperAccounts" style="margin-top:8px"></div>
+  <div class="section-kicker" style="margin-top:18px">OPEN POSITIONS</div>
+  <div id="paperOpenPositions"><div class="empty">Connect the API to load paper positions.</div></div>
+  <div class="section-kicker" style="margin-top:18px">SESSION EXECUTION HISTORY</div>
+  <div id="paperActivity"><div class="empty">Connect the API to load paper trades.</div></div>
+  <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn" id="paperRefresh">Refresh paper desk</button></div>
+ </section>
+ <div class="section-kicker">TELEGRAM · PRIVATE ALERTS</div>
+ <section class="panel" id="telegram" style="margin-bottom:15px">
+  <div class="panelhead"><div><h3>TELEGRAM ALERTS</h3><p>Private delivery for paper-trading and wallet research notifications</p></div><span class="pill" id="telegramStatus">CHECKING CONFIGURATION</span></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px">
+   <div><div class="eyebrow">CONNECT YOUR PRIVATE BOT</div>
+    <ol style="padding-left:20px;line-height:1.8;color:var(--muted)">
+     <li>Open <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">Telegram BotFather</a> and create a bot with <code>/newbot</code>.</li>
+     <li>Copy the bot token. Keep it private.</li>
+     <li>Open your new bot in Telegram and press Start or send it a message.</li>
+     <li>Add the token as Codespaces secret <code>TELEGRAM_BOT_TOKEN</code> and your private chat ID as <code>TELEGRAM_CHAT_ID</code>.</li>
+     <li>Restart the SignalForge server, then send a test alert here.</li>
+    </ol>
+   </div>
+   <div class="metric" style="padding:15px"><div class="eyebrow">DELIVERY CHECK</div><p class="notice">Credentials stay on the server. SignalForge never asks for your Telegram token in this page and never exposes it to browser JavaScript.</p><button class="btn primary" id="telegramTest" disabled>Send test message</button><p class="notice" style="margin-top:10px">The test confirms the configured bot can deliver a private message to your chat.</p></div>
+  </div>
+ </section>
  <div class="section-kicker">01 · MARKET MONITOR</div><section class="panel" id="trending" style="margin-bottom:15px"><div class="panelhead"><div><h3>Market Movers</h3><p>Live Solana market movers sourced from GeckoTerminal trending pools and enriched with DEX Screener data</p></div><div class="trendtabs"><button class="active" data-hours="1h">1 hour</button><button data-hours="24h">24 hours</button></div></div><div id="trendingList"><div class="empty">Connect the API to load trending tokens.</div></div><p class="notice">1 hour and 24 hours use the market-data provider. 5-hour change requires five hours of continuous local snapshots. Rankings are not the entire Solana market.</p></section>
  <section class="panel" id="trendingNow" style="margin-bottom:15px"><div class="panelhead"><div><h3>MOST TRENDING RIGHT NOW</h3><p>Live market-wide Solana trending coins ranked by available liquidity, volume, activity and momentum</p></div><button class="btn primary" id="trendingNowRefresh">Scan now</button></div><div id="trendingNowList"><div class="empty">Connect the API to scan current candidates.</div></div><div class="notice" id="trendingNowNote">Live GeckoTerminal trending-pool discovery. Coins remain visible when optional market metrics are unavailable.</div><div class="legend"><span><i style="background:var(--green)"></i>Passed filters</span><span><i style="background:var(--amber)"></i>Insufficient data / rejected</span></div></section>
  <div class="section-kicker">02 · SYSTEM OVERVIEW</div><section class="stats">
