@@ -265,9 +265,11 @@ async def _bubble_approved(client, mint):
     return approved
 
 
-async def _approved_candidates(client, pairs):
+async def _approved_candidates(client, pairs, eligible_mints=None):
     ranked = []
     for mint, pair in pairs.items():
+        if eligible_mints is not None and mint not in eligible_mints:
+            continue
         score, reason = _score(pair)
         if score is not None:
             ranked.append((score, mint))
@@ -324,7 +326,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                             + [r["asset_id"] for r in conn.execute("SELECT asset_id FROM paper_positions WHERE account_id='paper-automatic'").fetchall()]
                         ))[:150]
                         pairs = await _fetch_pairs(client, mints) if mints else {}
-                        approved_mints = await _approved_candidates(client, pairs)
+                        approved_mints = await _approved_candidates(client, pairs, eligible_mints=set(wallet_signals))
                         outcome = _trade_decisions(conn, assets, pairs, approved_mints=approved_mints)
                         for trade in outcome.get("entries", []):
                             pair = pairs.get(trade["asset_id"], {})
