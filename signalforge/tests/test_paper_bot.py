@@ -140,3 +140,19 @@ def test_aggressive_market_only_entry_still_rejects_collapsing_momentum():
     outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Weak Momentum"}], {mint: pair})
     assert outcome["entries"] == []
     assert outcome["candidate_count"] == 0
+
+
+
+def test_new_paper_session_resets_old_positions_but_preserves_trade_history():
+    from app import paper
+    conn = connect(":memory:")
+    run_migrations(conn)
+    paper.ensure_accounts(conn)
+    paper.place_order(conn, "automatic", "prior-session-token", "Prior Session", "buy", 200, 1, "prior simulation")
+    before = conn.execute("SELECT COUNT(*) n FROM paper_trades").fetchone()["n"]
+    status = configure_bot(conn, enabled=True, duration_seconds=900)
+    account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
+    assert status["enabled"] is True
+    assert conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?", (account["id"],)).fetchone()["n"] == 0
+    assert account["cash_balance"] == account["starting_balance"]
+    assert conn.execute("SELECT COUNT(*) n FROM paper_trades").fetchone()["n"] == before
