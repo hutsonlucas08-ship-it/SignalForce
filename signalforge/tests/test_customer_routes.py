@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from cryptography.fernet import Fernet
 
 from app.config import Settings
-from app.main import create_app
+from app.main import create_app\nfrom app import customer_email
 
 
 def _client():
@@ -31,18 +31,18 @@ def _login(client, email):
     return response.json()["csrf_token"]
 
 
-def test_customer_can_register_and_sign_in_without_manual_activation():
+def test_customer_can_register_verify_email_and_sign_in_without_manual_activation(monkeypatch):
     client = _client()
-    _register_and_activate(client, "one@example.test")
+    _register_and_activate(client, "one@example.test", monkeypatch)
     csrf = _login(client, "one@example.test")
     assert csrf
     assert client.get("/v1/customer/me").json()["email"] == "one@example.test"
 
 
-def test_customer_routes_enforce_csrf_and_tenant_isolation():
+def test_customer_routes_enforce_csrf_and_tenant_isolation(monkeypatch):
     client_a, client_b = _client(), _client()
-    _register_and_activate(client_a, "a@example.test")
-    _register_and_activate(client_b, "b@example.test")
+    _register_and_activate(client_a, "a@example.test", monkeypatch)
+    _register_and_activate(client_b, "b@example.test", monkeypatch)
     csrf_a = _login(client_a, "a@example.test")
     csrf_b = _login(client_b, "b@example.test")
     wallet = "11111111111111111111111111111111"
@@ -58,9 +58,9 @@ def test_customer_routes_enforce_csrf_and_tenant_isolation():
                            headers={"X-CSRF-Token": csrf_b}).status_code == 404
 
 
-def test_customer_paper_accounts_are_created_per_signed_in_customer():
+def test_customer_paper_accounts_are_created_per_signed_in_customer(monkeypatch):
     client = _client()
-    _register_and_activate(client, "paper@example.test")
+    _register_and_activate(client, "paper@example.test", monkeypatch)
     csrf = _login(client, "paper@example.test")
     response = client.post("/v1/customer/paper-accounts",
                            headers={"X-CSRF-Token": csrf},
@@ -73,7 +73,7 @@ def test_customer_paper_accounts_are_created_per_signed_in_customer():
 def test_customer_integration_credentials_are_encrypted_and_never_returned(monkeypatch):
     monkeypatch.setenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
     client = _client()
-    _register_and_activate(client, "integration@example.test")
+    _register_and_activate(client, "integration@example.test", monkeypatch)
     csrf = _login(client, "integration@example.test")
     secret = "helius-secret-not-for-browser"
     response = client.post(
@@ -88,18 +88,18 @@ def test_customer_integration_credentials_are_encrypted_and_never_returned(monke
     assert any(item["provider"] == "helius" and item["configured"] for item in status)
 
 
-def test_customer_session_logout_revokes_cookie_session():
+def test_customer_session_logout_revokes_cookie_session(monkeypatch):
     client = _client()
-    _register_and_activate(client, "logout@example.test")
+    _register_and_activate(client, "logout@example.test", monkeypatch)
     csrf = _login(client, "logout@example.test")
     assert client.post("/v1/customer/logout", headers={"X-CSRF-Token": csrf}).status_code == 200
     assert client.get("/v1/customer/me").status_code == 401
 
 
-def test_customer_paper_trade_api_is_csrf_protected_and_account_scoped():
+def test_customer_paper_trade_api_is_csrf_protected_and_account_scoped(monkeypatch):
     client_a, client_b = _client(), _client()
-    _register_and_activate(client_a, "trade-a@example.test")
-    _register_and_activate(client_b, "trade-b@example.test")
+    _register_and_activate(client_a, "trade-a@example.test", monkeypatch)
+    _register_and_activate(client_b, "trade-b@example.test", monkeypatch)
     csrf_a, csrf_b = _login(client_a, "trade-a@example.test"), _login(client_b, "trade-b@example.test")
     paper = client_a.post("/v1/customer/paper-accounts", headers={"X-CSRF-Token": csrf_a},
                           json={"starting_capital_usd": 100}).json()["paper_account"]
@@ -115,9 +115,9 @@ def test_customer_paper_trade_api_is_csrf_protected_and_account_scoped():
     assert client_a.get(f"/v1/customer/paper-accounts/{paper['id']}/positions").json()["positions"][0]["quantity"] == 10
 
 
-def test_customer_can_refresh_csrf_after_session_cookie_survives_reload():
+def test_customer_can_refresh_csrf_after_session_cookie_survives_reload(monkeypatch):
     client = _client()
-    _register_and_activate(client, "csrf@example.test")
+    _register_and_activate(client, "csrf@example.test", monkeypatch)
     _login(client, "csrf@example.test")
     fresh = client.get("/v1/customer/csrf")
     assert fresh.status_code == 200
