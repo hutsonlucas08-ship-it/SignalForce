@@ -495,6 +495,62 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
                 "note": "Coverage expands with an approved Pump.fun API key; otherwise this scans PumpPortal-discovered assets only. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
 
+    @app.get("/v1/integrations/helius/status")
+    async def helius_integration_status(_: Principal = Depends(require_read)):
+        """Verify both Helius services without exposing credentials or response bodies."""
+        key = os.getenv("HELIUS_API_KEY")
+        if not key:
+            return {
+                "configured": False,
+                "healthy": False,
+                "rpc": {"status": "not_configured", "http_status": None},
+                "enhanced_transactions": {"status": "not_configured", "http_status": None},
+            }
+
+        async def check_rpc(client):
+            try:
+                response = await client.post(
+                    "https://mainnet.helius-rpc.com/",
+                    params={"api-key": key},
+                    json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("result") != "ok":
+                    return {"status": "unexpected_response", "http_status": response.status_code}
+                return {"status": "connected", "http_status": response.status_code}
+            except httpx.HTTPStatusError as exc:
+                return {"status": "http_error", "http_status": exc.response.status_code}
+            except (httpx.HTTPError, ValueError, AttributeError):
+                return {"status": "unavailable", "http_status": None}
+
+        async def check_enhanced_transactions(client):
+            try:
+                response = await client.get(
+                    "https://api-mainnet.helius-rpc.com/v0/addresses/11111111111111111111111111111111/transactions",
+                    params={"api-key": key, "limit": 1},
+                )
+                response.raise_for_status()
+                if not isinstance(response.json(), list):
+                    return {"status": "unexpected_response", "http_status": response.status_code}
+                return {"status": "connected", "http_status": response.status_code}
+            except httpx.HTTPStatusError as exc:
+                return {"status": "http_error", "http_status": exc.response.status_code}
+            except (httpx.HTTPError, ValueError, AttributeError):
+                return {"status": "unavailable", "http_status": None}
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            rpc, enhanced = await asyncio.gather(
+                check_rpc(client), check_enhanced_transactions(client)
+            )
+        return {
+            "configured": True,
+            "healthy": rpc["status"] == "connected" and enhanced["status"] == "connected",
+            "rpc": rpc,
+            "enhanced_transactions": enhanced,
+            "note": "Connectivity only. This does not mean wallet discovery or continuous trade ingestion is running.",
+        }
+
     @app.get("/v1/copytraders/wallets")
     def tracked_wallets(_: Principal = Depends(require_read), conn=Depends(get_conn)):
         rows = conn.execute("SELECT * FROM tracked_wallets ORDER BY added_at DESC").fetchall()
