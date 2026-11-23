@@ -591,6 +591,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             ("helius_wallet_sync",),
         ).fetchone()
         wallet_count = conn.execute("SELECT COUNT(*) FROM tracked_wallets").fetchone()[0]
+        quarantined_wallets = conn.execute(
+            "SELECT wallet_address, helius_404_count FROM tracked_wallets "
+            "WHERE helius_status='quarantined' ORDER BY wallet_address"
+        ).fetchall()
         last_wallet_sync = conn.execute(
             "SELECT MAX(last_seen_at) FROM tracked_wallets"
         ).fetchone()[0]
@@ -602,6 +606,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "worker_state": worker_state,
             "worker_running": worker_state == "running",
             "tracked_wallet_count": wallet_count,
+            "quarantined_wallet_count": len(quarantined_wallets),
+            "quarantined_wallets": [
+                {"wallet": f"{row['wallet_address'][:6]}…{row['wallet_address'][-4:]}",
+                 "consecutive_404s": row["helius_404_count"]}
+                for row in quarantined_wallets
+            ],
             "last_success_at": source["last_success_at"] if source else None,
             "last_error_at": source["last_error_at"] if source else None,
             "last_error": source["last_error"] if source else None,
