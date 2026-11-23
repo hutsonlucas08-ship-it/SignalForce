@@ -53,5 +53,5 @@ def load_settings() -> Settings:
         admin_api_keys=admin_keys,
         rate_limit_per_minute=int(os.getenv("SIGNALFORGE_RATE_LIMIT_PER_MINUTE", "300")),
         stale_after_seconds=int(os.getenv("SIGNALFORGE_STALE_AFTER_SECONDS", "300")),
-        database_url=_database_url(),
+        database_url=database_url,
     )
