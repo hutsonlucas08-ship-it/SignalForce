@@ -565,13 +565,17 @@ def bot_status(conn):
 def configure_bot(conn, enabled=None, allocated_capital_usd=None, duration_seconds=None):
     state = _state(conn)
     if allocated_capital_usd is not None:
-        if not isinstance(allocated_capital_usd,(int,float)) or allocated_capital_usd < 100 or allocated_capital_usd > 100000:
-            raise ValueError("Virtual capital must be between $100 and $100,000")
+        if not isinstance(allocated_capital_usd,(int,float)) or allocated_capital_usd < 50 or allocated_capital_usd > 100000:
+            raise ValueError("Virtual capital must be between $50 and $100,000")
+        if state.get("enabled") and enabled is not False:
+            raise ValueError("Stop the paper session before changing virtual capital")
         account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
-        trades = conn.execute("SELECT COUNT(*) n FROM paper_trades WHERE account_id=?",(account["id"],)).fetchone()["n"]
         positions = conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?",(account["id"],)).fetchone()["n"]
-        if trades or positions:
-            raise ValueError("Capital can only be changed before the automatic account has any trades or open positions")
+        # Starting a new session clears its old open positions below, so a new
+        # allocation can be applied atomically with that reset. Closed trade
+        # history remains preserved and does not lock the account's capital.
+        if positions and enabled is not True:
+            raise ValueError("Stop or restart the session before changing capital while positions are open")
         now=utcnow()
         conn.execute("UPDATE paper_accounts SET starting_balance=?,cash_balance=?,updated_at=? WHERE id=?",
                      (float(allocated_capital_usd),float(allocated_capital_usd),now,account["id"]))
