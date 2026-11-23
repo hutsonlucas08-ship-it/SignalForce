@@ -29,33 +29,69 @@ async def sync_once(db_path: str, api_key: str, *, client=None, limit: int = 100
     try:
         store.register_source(conn, SOURCE_NAME, "helius_polling")
         wallets = conn.execute(
-            "SELECT wallet_address FROM tracked_wallets ORDER BY added_at, id"
+            "SELECT wallet_address, last_signature FROM tracked_wallets ORDER BY added_at, id"
         ).fetchall()
+        page_limit = max(1, min(int(limit), 100))
         for row in wallets:
             wallet = row["wallet_address"]
+            checkpoint = row["last_signature"]
             totals["wallets_checked"] += 1
             try:
-                response = await http.get(
-                    API_URL.format(wallet=wallet),
-                    params={"api-key": api_key, "limit": max(1, min(int(limit), 100)),
-                            "sort-order": "desc", "type": "SWAP",
-                            "token-accounts": "balanceChanged"},
-                )
-                response.raise_for_status()
-                payload = response.json()
-                if not isinstance(payload, list):
-                    raise ValueError("Unexpected Helius response format")
-                result = store_wallet_transactions(conn, wallet, payload)
-                totals["transactions_parsed"] += result["parsed"]
-                totals["transactions_inserted"] += result["inserted"]
-                totals["duplicates"] += result["duplicates"]
-                if payload:
-                    conn.execute(
-                        "UPDATE tracked_wallets SET last_signature=?, last_seen_at=? WHERE wallet_address=?",
-                        (payload[0].get("signature"), utcnow(), wallet),
-                    )
-                    conn.commit()
-                totals["wallets_succeeded"] += 1
+                before_signature = None
+                newest_signature = None
+                caught_up = checkpoint is None
+                for _page in range(20):
+                    params = {"api-key": api_key, "limit": page_limit,
+                              "sort-order": "desc", "type": "SWAP",
+                              "token-accounts": "balanceChanged"}
+                    if before_signature:
+                        params["before-signature"] = before_signature
+                    response = await http.get(API_URL.format(wallet=wallet), params=params)
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, list):
+                        raise ValueError("Unexpected Helius response format")
+                    if not payload:
+                        caught_up = True
+                        break
+
+                    if newest_signature is None:
+                        newest_signature = payload[0].get("signature")
+
+                    new_rows = []
+                    found_checkpoint = False
+                    for transaction in payload:
+                        signature = transaction.get("signature") if isinstance(transaction, dict) else None
+                        if checkpoint and signature == checkpoint:
+                            found_checkpoint = True
+                            break
+                        new_rows.append(transaction)
+
+                    result = store_wallet_transactions(conn, wallet, new_rows)
+                    totals["transactions_parsed"] += result["parsed"]
+                    totals["transactions_inserted"] += result["inserted"]
+                    totals["duplicates"] += result["duplicates"]
+
+                    if checkpoint is None or found_checkpoint or len(payload) < page_limit:
+                        caught_up = True
+                        break
+
+                    before_signature = payload[-1].get("signature")
+                    if not before_signature:
+                        raise ValueError("Helius page did not contain a pagination signature")
+
+                if caught_up:
+                    if newest_signature:
+                        conn.execute(
+                            "UPDATE tracked_wallets SET last_signature=?, last_seen_at=? WHERE wallet_address=?",
+                            (newest_signature, utcnow(), wallet),
+                        )
+                        conn.commit()
+                    totals["wallets_succeeded"] += 1
+                else:
+                    # Keep the old checkpoint so the next cycle resumes without silently skipping history.
+                    totals["wallet_errors"] += 1
+                    log.warning("Helius polling page cap reached for wallet %s; checkpoint retained", wallet)
             except (httpx.HTTPError, ValueError, TypeError) as exc:
                 totals["wallet_errors"] += 1
                 log.warning("Helius polling failed for wallet %s (%s)", wallet, type(exc).__name__)
