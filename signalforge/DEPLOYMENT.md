@@ -17,6 +17,9 @@ Set these in the hosting provider's secret/environment dashboard:
 - `SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY`: Fernet key used to encrypt customer Helius and Telegram credentials. Generate once with:
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 - `SIGNALFORGE_COOKIE_SECURE=true`: requires HTTPS for customer sessions.
+- `SIGNALFORGE_PUBLIC_URL`: the public HTTPS base URL, with no trailing slash, used in verification links.
+- `RESEND_API_KEY`: Resend transactional email API key.
+- `SIGNALFORCE_EMAIL_FROM`: sender address verified in Resend, e.g. `SignalForce <verify@yourdomain.com>`.
 - `HELIUS_API_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID` are optional legacy operator integrations. Customer integrations are stored separately and encrypted.
 
 **Back up the encryption key separately and keep it unchanged.** If it is lost or rotated without re-encrypting stored credentials, customer integration secrets cannot be decrypted. Back up the persistent database and test restores before launch.
@@ -27,16 +30,21 @@ Set these in the hosting provider's secret/environment dashboard:
 2. In Render, create a new Blueprint and select this repository's `signalforge/render.yaml`.
 3. Enter all required secret values in Render. Do not paste secrets into GitHub source files or customer-facing pages.
 4. Deploy and wait for the `/health` check to pass.
-5. Open `https://YOUR-SERVICE.onrender.com/account` for the customer workspace and `/` for the existing operator dashboard.
+5. Set `SIGNALFORGE_PUBLIC_URL` to the deployed HTTPS origin and verify the sender domain in Resend.
+6. Open `https://YOUR-SERVICE.onrender.com/` for the public SignalForce customer experience. Fresh Solana launches appear above account sign-in.
 6. Add a custom domain and verify HTTPS before inviting customers.
 
 The Blueprint uses a paid Starter service and a persistent disk. Confirm current hosting prices and region availability in Render before creating the service.
 
-## Customer account registration
+## Customer account registration and verification
 
-Beta self-registration creates an active account immediately. Customers can create an account and sign in using the same email address and password; no administrator activation or Codespaces access is required.
+Customers register on the public home page, receive a one-time verification link by email, click it, then sign in with the same email and password. Verification tokens are stored only as hashes, expire after one hour, and can be used once. A resend endpoint is available for pending accounts. No customer needs GitHub or Codespaces access.
 
-Email ownership is not verified yet, and password reset/account recovery is not implemented. Treat this as a controlled beta, not production-ready public registration. Before broad public launch, add email verification, password recovery, account deletion, abuse monitoring, and an administrator support workflow. The protected administrator activation endpoint remains available for administrative account controls.
+Email delivery uses Resend. Registration intentionally fails with a clear configuration error until `RESEND_API_KEY`, `SIGNALFORCE_EMAIL_FROM`, and `SIGNALFORGE_PUBLIC_URL` are configured. Verify the sender domain in Resend before inviting testers.
+
+The public home page now serves the customer experience; the former operator dashboard HTML is no longer served at `/`. Do not publish operator API keys or grant customers access to internal operator credentials. The existing operator dashboard and its APIs remain legacy operator tooling and require a separate private deployment/access design before reuse.
+
+Password recovery, account deletion, and production abuse monitoring remain outstanding. Run a small invite-only beta after email delivery, HTTPS, and persistent storage are configured.
 
 ## Pre-launch security checklist
 
@@ -44,8 +52,9 @@ Email ownership is not verified yet, and password reset/account recovery is not 
 - [ ] Persistent database backups configured and a restore tested.
 - [ ] Encryption key backed up securely and kept stable.
 - [ ] Read and admin API keys are different, long, and stored only as host secrets.
-- [ ] Customer account activation and support process established.
-- [ ] Email verification, password reset, and account deletion workflows implemented before public launch.
+- [ ] Resend sender domain verified and test verification email received.
+- [ ] Customer registration, verification, resend, and sign-in tested end to end.
+- [ ] Password reset and account deletion workflows implemented before broad public launch.
 - [ ] Rate limits, logging, monitoring, and abuse alerts reviewed under production traffic.
 - [ ] Tenant isolation and paper trading tests pass on the deployed build.
 - [ ] Provider keys tested using customer-owned credentials.
