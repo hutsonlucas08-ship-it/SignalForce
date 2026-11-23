@@ -56,6 +56,15 @@ def open_source(path: Path):
 
 
 def source_inventory(conn: sqlite3.Connection):
+    integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+    if integrity != "ok":
+        raise RuntimeError(f"SQLite integrity check failed: {integrity}")
+    violations = conn.execute("PRAGMA foreign_key_check").fetchmany(10)
+    if violations:
+        raise RuntimeError(
+            "SQLite foreign-key check failed; first violations: "
+            + repr([tuple(row) for row in violations])
+        )
     names = [
         row[0]
         for row in conn.execute(
