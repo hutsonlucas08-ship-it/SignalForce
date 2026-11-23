@@ -28,8 +28,10 @@ def test_auth_status_reports_configuration_without_exposing_keys():
     c, _ = make_client()
     response = c.get("/v1/auth/status")
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert body == {
         "read_key_configured": True, "read_key_count": 1,
+        "read_key_fingerprints": [__import__("hashlib").sha256(READ.encode()).hexdigest()[:8]],
         "admin_key_configured": True, "admin_key_count": 1,
     }
     assert READ not in response.text and ADMIN not in response.text
