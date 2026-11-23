@@ -1,4 +1,4 @@
-from app.db import connect, run_migrations, utcnow
+from app.db import connect, run_migrations
 from app import paper
 from app.paper_bot import _trade_decisions
 from app.position_track import observe
@@ -45,9 +45,7 @@ def test_paper_bot_uses_persisted_peak_for_trailing_stop():
 
 def test_paper_bot_reports_open_position_without_a_price():
     conn, _ = _db_with_position()
-    conn.execute("UPDATE position_tracking SET unpriced_since=? WHERE asset_id='mint-exit-test'",
-                 ("2026-11-22T20:00:00Z",))
-    conn.commit()
+    observe(conn, "mint-exit-test", 1.0, None, None, "2026-11-22T20:00:00Z")
     outcome = _trade_decisions(conn, [], {})
     assert len(outcome["stale_positions"]) == 1
     assert outcome["stale_positions"][0]["asset_id"] == "mint-exit-test"
