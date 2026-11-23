@@ -31,7 +31,8 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, encoded: str) -> bool:
-    if not isinstance(password, str) or not isinstance(encoded, str):
+    # Bound attacker-controlled login input before invoking the memory-hard KDF.
+    if not isinstance(password, str) or len(password) > 1024 or not isinstance(encoded, str):
         return False
     try:
         algorithm, n, r, p, salt_text, hash_text = encoded.split("$")
