@@ -5,7 +5,10 @@ import uuid
 
 import pytest
 
+from app.config import Settings
 from app.db import connect, run_migrations, utcnow
+from app.main import create_app
+from fastapi.testclient import TestClient
 
 
 DATABASE_URL = os.getenv("SIGNALFORGE_TEST_DATABASE_URL")
@@ -97,3 +100,16 @@ def test_postgres_paper_bot_lease_query_is_transactionally_locked(postgres_conne
     ).fetchone()
     assert row is not None
     conn.commit()
+
+
+
+def test_fastapi_application_starts_and_serves_health_on_postgres(postgres_connection):
+    settings = Settings(
+        db_path=":memory:",
+        read_api_keys=frozenset(),
+        admin_api_keys=frozenset(),
+        database_url=DATABASE_URL,
+    )
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/health")
+    assert response.status_code == 200
