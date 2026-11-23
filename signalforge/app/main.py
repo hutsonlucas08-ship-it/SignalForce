@@ -117,11 +117,6 @@ class RiskScreenRequest(BaseModel):
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or load_settings()
-    if settings.database_url:
-        raise ConfigError(
-            "DATABASE_URL is set, but PostgreSQL support is not complete yet. "
-            "Refusing to start with SQLite so hosted customer data is not silently written to ephemeral storage."
-        )
     app = FastAPI(title="SignalForce", version=settings.version)
     app.state.settings = settings
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
@@ -159,8 +154,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 task.cancel()
 
     # One shared connection for ":memory:" (tests); a fresh connection per request otherwise.
-    shared = connect(settings.db_path) if settings.db_path == ":memory:" else None
-    boot = shared or connect(settings.db_path)
+    shared = connect(settings.db_path, settings.database_url) if settings.db_path == ":memory:" else None
+    boot = shared or connect(settings.db_path, settings.database_url)
     applied = run_migrations(boot)
     store.log_event(boot, "info", "startup", f"started v{settings.version}; migrations applied: {applied or 'none'}")
     if not (settings.read_api_keys or settings.admin_api_keys):
@@ -172,7 +167,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if shared is not None:
             yield shared
             return
-        conn = connect(settings.db_path)
+        conn = connect(settings.db_path, settings.database_url)
         try:
             yield conn
         finally:
