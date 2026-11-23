@@ -313,14 +313,72 @@ def test_geckoterminal_new_launches_requires_read_auth():
     assert c.get("/v1/research/new-launches").status_code == 401
 
 
-def test_trending_now_uses_local_tokens_and_dexscreener_only():
-    c, _ = make_client()
-    # The research endpoint uses its current local/DexScreener sources; the
-    # removed Pump.fun discovery helper is intentionally not part of the bot.
-    response = c.get("/v1/research/trending-now", headers=h(READ))
+def test_trending_now_discovers_market_wide_gecko_tokens(monkeypatch):
+    client, _ = make_client()
+    from app import main
+
+    main._launch_cache.pop("trending", None)
+    payload = {
+        "data": [{
+            "id": "solana_pool123",
+            "attributes": {
+                "base_token_price_usd": "0.00012",
+                "reserve_in_usd": "25000",
+                "volume_usd": {"m5": "1500", "h1": "12000", "h24": "80000"},
+                "price_change_percentage": {"h1": "12.5", "h24": "48.0"},
+            },
+            "relationships": {
+                "base_token": {"data": {"id": "token_base"}},
+                "quote_token": {"data": {"id": "token_quote"}},
+            },
+        }],
+        "included": [{
+            "id": "token_base",
+            "type": "token",
+            "attributes": {
+                "address": "GeckoTrendingMint111111111111111111111111",
+                "name": "Gecko Trending Coin",
+                "symbol": "GTC",
+                "image_url": "https://example.com/token.png",
+            },
+        }],
+    }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    async def no_pairs(_client, mints):
+        assert "GeckoTrendingMint111111111111111111111111" in mints
+        return {}
+
+    monkeypatch.setattr("app.main.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.main.paper_bot._fetch_pairs", no_pairs)
+
+    response = client.get("/v1/research/trending-now", headers=h(READ))
     assert response.status_code == 200
-    assert response.json()["candidates"] == []
-    assert response.json()["source"] == "DEX Screener market data"
+    body = response.json()
+    assert body["scanned"] == 1
+    assert body["candidates"][0]["asset_id"] == "GeckoTrendingMint111111111111111111111111"
+    assert body["candidates"][0]["name"] == "Gecko Trending Coin"
+    assert body["candidates"][0]["image_url"] == "https://example.com/token.png"
+    assert body["candidates"][0]["source"] == "GeckoTerminal"
 
 
 def test_dashboard_is_served_at_root():
@@ -328,7 +386,8 @@ def test_dashboard_is_served_at_root():
     response = c.get("/")
     assert response.status_code == 200
     assert "SignalForge" in response.text
-    assert "Token Scanner" in response.text
+    assert "New Launches" in response.text
+    assert "Latest 10 Discovered Tokens" not in response.text
 
 
 def test_paper_accounts_start_with_separate_persistent_balances():
