@@ -32,18 +32,11 @@ Set these in the hosting provider's secret/environment dashboard:
 
 The Blueprint uses a paid Starter service and a persistent disk. Confirm current hosting prices and region availability in Render before creating the service.
 
-## Customer account activation
+## Customer account registration
 
-Self-registration creates a `pending` account. It does not grant access automatically. An administrator must activate the account using the protected endpoint:
+Beta self-registration creates an active account immediately. Customers can create an account and sign in using the same email address and password; no administrator activation or Codespaces access is required.
 
-```bash
-curl -X POST "https://YOUR-SERVICE.onrender.com/v1/admin/customers/activate" \
-  -H "X-API-Key: YOUR_ADMIN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"customer@example.com"}'
-```
-
-This is a temporary administrator-controlled activation process. It is not email verification. Configure a real email verification and account recovery provider before opening public self-service registration.
+Email ownership is not verified yet, and password reset/account recovery is not implemented. Treat this as a controlled beta, not production-ready public registration. Before broad public launch, add email verification, password recovery, account deletion, abuse monitoring, and an administrator support workflow. The protected administrator activation endpoint remains available for administrative account controls.
 
 ## Pre-launch security checklist
 
