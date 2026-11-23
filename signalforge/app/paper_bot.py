@@ -313,6 +313,7 @@ async def _bubble_approved(client, mint):
     if cached and now - cached[0] < 300:
         return cached[1]
     approved = False
+    why = "no launch evidence"
     try:
         response = await client.get("https://bubblemaps.dev/api/map/" + mint)
         response.raise_for_status()
@@ -321,11 +322,17 @@ async def _bubble_approved(client, mint):
         score = launch.get("score")
         if launch.get("status") == "ok" and isinstance(score, (int,float)) and score >= 70:
             limits = {"sniperShare":0.35, "bundleShare":0.25, "devClusterShare":0.25, "top10Share":0.75}
-            approved = all(isinstance(launch.get(field),(int,float)) and launch[field] <= ceiling
-                           for field,ceiling in limits.items())
-    except (httpx.HTTPError, ValueError, TypeError):
-        approved = False
+            missing = [field for field in limits if not isinstance(launch.get(field), (int, float))]
+            exceeded = [field for field, ceiling in limits.items()
+                        if isinstance(launch.get(field), (int, float)) and launch[field] > ceiling]
+            approved = not missing and not exceeded
+            why = "passed" if approved else ("missing " + ",".join(missing) if missing else "exceeded " + ",".join(exceeded))
+        else:
+            why = "launch status/score did not qualify"
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        why = "request failed: " + type(exc).__name__
     _BUBBLE_CACHE[mint] = (now, approved)
+    log.info("BubbleMaps check %s: approved=%s (%s)", mint[:8], approved, why)
     return approved
 
 
