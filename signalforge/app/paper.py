@@ -38,7 +38,7 @@ def overview(conn):
             "return_pct":round((equity/account["starting_balance"]-1)*100,3),
             "closed_trades":realized["n"],"win_rate_pct":round(wins/realized["n"]*100,2) if realized["n"] else None,
             "open_positions":len(positions),"positions":positions,
-            "risk_limits":{"max_position_pct_equity":5,"max_open_positions":10,"daily_realized_loss_limit_pct":5,"fee_pct":0.5,"slippage_bps":50}})
+            "risk_limits":{"max_position_pct_equity":10 if strategy=="automatic" else 5,"max_open_positions":20 if strategy=="automatic" else 10,"daily_realized_loss_limit_pct":5,"fee_pct":0.5,"slippage_bps":50}})
     return {"starting_balance_per_strategy":STARTING_BALANCE,"accounts":accounts,
         "note":"Paper simulation only; performance depends on supplied market-price snapshots."}
 
