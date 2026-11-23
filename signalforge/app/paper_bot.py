@@ -20,16 +20,19 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
 _STALE_ALERTED = {}
-INTERVAL_SECONDS = 60.0
+INTERVAL_SECONDS = 30.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
-MIN_DISTINCT_WALLET_BUYS = 2
-SINGLE_WALLET_MIN_MARKET_SCORE = 75.0
+MIN_DISTINCT_WALLET_BUYS = 1
+SINGLE_WALLET_MIN_MARKET_SCORE = 35.0
+MARKET_ONLY_MIN_SCORE = 60.0
+MAX_OPEN_POSITIONS = 20
+POSITION_EQUITY_FRACTION = 0.10
 LEASE_SECONDS = 90.0
-MIN_LIQUIDITY_USD = 15000.0
-MIN_VOLUME_5M_USD = 3000.0
-MIN_BUYS_5M = 15
-MIN_MARKET_CAP_USD = 25000.0
-MAX_MARKET_CAP_USD = 5000000.0
+MIN_LIQUIDITY_USD = 5000.0
+MIN_VOLUME_5M_USD = 500.0
+MIN_BUYS_5M = 3
+MIN_MARKET_CAP_USD = 5000.0
+MAX_MARKET_CAP_USD = 20000000.0
 STOP_LOSS_PCT = -10.0
 STALE_POSITION_SECONDS = 300.0
 EXIT_CONFIG = exit_rules.ExitConfig(stop_loss_pct=STOP_LOSS_PCT)
@@ -120,11 +123,11 @@ def _score(pair):
         (isinstance(market_cap, (int,float)) and MIN_MARKET_CAP_USD <= market_cap <= MAX_MARKET_CAP_USD, "Outside configured market-cap range"),
         (isinstance(vol5, (int,float)) and vol5 >= MIN_VOLUME_5M_USD, "Five-minute volume too low or missing"),
         (isinstance(buys5, int) and buys5 >= MIN_BUYS_5M, "Not enough recent buy transactions"),
-        (isinstance(sells5, int) and sells5 > 0, "Sell-side activity missing"),
-        (isinstance(buys1, int) and isinstance(sells1, int) and buys1 > sells1, "One-hour buy pressure is not positive"),
-        (isinstance(vol1, (int,float)) and vol1 >= 10000, "One-hour volume too low or missing"),
-        (isinstance(change5, (int,float)) and 0.5 <= change5 <= 20, "Five-minute momentum is weak or overheated"),
-        (isinstance(change1, (int,float)) and change1 > 0, "One-hour momentum is not positive"),
+        (isinstance(sells5, int) and sells5 >= 0, "Five-minute transaction data missing"),
+        (isinstance(buys1, int) and isinstance(sells1, int) and buys1 >= sells1 * 0.8, "One-hour buy pressure is too weak"),
+        (isinstance(vol1, (int,float)) and vol1 >= 2000, "One-hour volume too low or missing"),
+        (isinstance(change5, (int,float)) and -5 <= change5 <= 35, "Five-minute momentum is too weak or overheated"),
+        (isinstance(change1, (int,float)) and change1 > -10, "One-hour momentum is collapsing"),
     ]
     for passed, reason in checks:
         if not passed:
@@ -268,15 +271,17 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             continue
         market_score, reason = _score(pair)
         signal = wallet_signals.get(mint)
-        if market_score is None or not signal:
+        if market_score is None:
             continue
-        wallet_count = int(signal["wallet_count"])
-        # Two or more distinct tracked wallets is a strong copy signal.
-        # A single wallet is only eligible with an exceptionally strong market score.
-        if wallet_count < MIN_DISTINCT_WALLET_BUYS and market_score < SINGLE_WALLET_MIN_MARKET_SCORE:
+        wallet_count = int(signal["wallet_count"]) if signal else 0
+        # Aggressive paper mode: one tracked-wallet buy is confirmation; strong
+        # momentum setups may qualify even without a tracked-wallet signal.
+        if wallet_count == 0 and market_score < MARKET_ONLY_MIN_SCORE:
             continue
-        combined_score = min(100.0, market_score + min(wallet_count * 7.5, 20.0))
-        candidates.append((combined_score, mint, pair, signal, market_score))
+        if wallet_count > 0 and market_score < SINGLE_WALLET_MIN_MARKET_SCORE:
+            continue
+        combined_score = min(100.0, market_score + min(wallet_count * 10.0, 25.0))
+        candidates.append((combined_score, mint, pair, signal or {"wallet_count": 0, "buy_count": 0, "latest_buy_at": None}, market_score))
     candidates.sort(reverse=True, key=lambda x: x[0])
 
     account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
@@ -284,10 +289,10 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
         "SELECT COALESCE(SUM(last_price*quantity),0) v FROM paper_positions WHERE account_id=?",
         (account["id"],)).fetchone()["v"]
     count = conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?",(account["id"],)).fetchone()["n"]
-    per_trade = min(equity * 0.05, account["cash_balance"])
+    per_trade = min(equity * POSITION_EQUITY_FRACTION, account["cash_balance"])
     entries = []
     for score, mint, pair, signal, market_score in candidates:
-        if count >= 10 or per_trade < 10:
+        if count >= MAX_OPEN_POSITIONS or per_trade < 10:
             break
         price = prices.get(mint)
         if not price:
@@ -401,8 +406,9 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                             + [a["asset_id"] for a in assets if a.get("asset_id")]
                         ))[:150]
                         pairs = await _fetch_pairs(client, mints) if mints else {}
-                        approved_mints = await _approved_candidates(client, pairs, eligible_mints=set(wallet_signals))
-                        outcome = _trade_decisions(conn, assets, pairs, approved_mints=approved_mints)
+                        # Aggressive paper mode uses market and momentum confirmation;
+                        # BubbleMaps launch data remains a research signal, not a hard gate.
+                        outcome = _trade_decisions(conn, assets, pairs)
                         for trade in outcome.get("entries", []):
                             pair = pairs.get(trade["asset_id"], {})
                             token = (pair.get("baseToken") or {}).get("name") or trade["asset_id"][:8]
