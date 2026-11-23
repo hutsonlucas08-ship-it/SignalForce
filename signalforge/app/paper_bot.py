@@ -24,7 +24,7 @@ INTERVAL_SECONDS = 30.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
 MIN_DISTINCT_WALLET_BUYS = 1
 SINGLE_WALLET_MIN_MARKET_SCORE = 35.0
-MARKET_ONLY_MIN_SCORE = 60.0
+MARKET_ONLY_MIN_SCORE = 50.0
 MAX_OPEN_POSITIONS = 20
 POSITION_EQUITY_FRACTION = 0.10
 LEASE_SECONDS = 90.0
@@ -301,7 +301,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
         try:
             result = paper.place_order(conn, "automatic", mint, names.get(mint) or (pair.get("baseToken") or {}).get("name"),
                                        "buy", per_trade, price,
-                                       "Combined smart-money + momentum entry; score %.1f; %d tracked wallets bought in last %d minutes; market and launch-health filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES),
+                                       "Aggressive paper entry; score %.1f; %d tracked wallets bought in last %d minutes; market momentum filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES),
                                        session_id=session_id, max_position_fraction=POSITION_EQUITY_FRACTION, max_open_positions=MAX_OPEN_POSITIONS)
             position_track.forget(conn, mint)
             position_track.observe(conn, mint, result["fill_price"], price, _liquidity_usd(pair))
