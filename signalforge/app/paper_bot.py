@@ -10,13 +10,16 @@ import uuid
 
 import httpx
 
-from . import paper
+from . import exit_rules, paper, position_track
 from .db import connect, utcnow
 from .research import scan_assets
 
 log = logging.getLogger("signalforge.paper_bot")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
+_STALE_ALERTED = {}
 INTERVAL_SECONDS = 60.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
 MIN_DISTINCT_WALLET_BUYS = 2
@@ -28,7 +31,8 @@ MIN_BUYS_5M = 15
 MIN_MARKET_CAP_USD = 25000.0
 MAX_MARKET_CAP_USD = 5000000.0
 STOP_LOSS_PCT = -10.0
-TAKE_PROFIT_PCT = 20.0
+STALE_POSITION_SECONDS = 300.0
+EXIT_CONFIG = exit_rules.ExitConfig(stop_loss_pct=STOP_LOSS_PCT)
 
 
 def _state(conn):
@@ -77,6 +81,20 @@ def _claim(conn):
 def _release(conn):
     conn.execute("UPDATE paper_bot_state SET lock_owner=NULL,lock_until_epoch=0 WHERE id=1 AND lock_owner=?",(OWNER,))
     conn.commit()
+
+
+def _liquidity_usd(pair):
+    value = ((pair or {}).get("liquidity") or {}).get("usd")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _held_mints(conn):
+    paper.ensure_accounts(conn)
+    account = conn.execute("SELECT id FROM paper_accounts WHERE strategy='automatic'").fetchone()
+    rows = conn.execute("SELECT asset_id FROM paper_positions WHERE account_id=?", (account["id"],)).fetchall()
+    return [row["asset_id"] for row in rows]
 
 
 def _score(pair):
@@ -179,21 +197,65 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             continue
     paper.mark_positions(conn, prices)
 
-    # Exit management runs before any new entries.
+    # Exit management runs before any new entries. Peak prices and partial-profit state
+    # persist across scans and process restarts.
+    now_dt = datetime.now(timezone.utc)
+    now_iso = utcnow()
     exits = []
+    stale = []
     for mint, pos in list(positions.items()):
         price = prices.get(mint)
+        pair = pairs.get(mint)
+        track = position_track.observe(
+            conn, mint, pos["avg_entry_price"], price, _liquidity_usd(pair), now_iso
+        )
         if not price:
+            since = exit_rules.parse_ts(track.get("unpriced_since"))
+            if since and (now_dt - since).total_seconds() >= STALE_POSITION_SECONDS:
+                stale.append({
+                    "asset_id": mint,
+                    "token_name": pos["token_name"],
+                    "unpriced_seconds": int((now_dt - since).total_seconds()),
+                })
             continue
-        pnl_pct = (price / pos["avg_entry_price"] - 1) * 100
-        if pnl_pct <= STOP_LOSS_PCT or pnl_pct >= TAKE_PROFIT_PCT:
-            reason = "Automatic paper exit: stop loss" if pnl_pct <= STOP_LOSS_PCT else "Automatic paper exit: take profit"
-            try:
-                sold = paper.place_order(conn, "automatic", mint, pos["token_name"], "sell",
-                                  pos["quantity"] * price, price, reason)
-                exits.append({"asset_id": mint, "token_name": pos["token_name"], "realized_pnl_usd": sold["realized_pnl_usd"], "reference_price": price})
-            except ValueError as exc:
-                log.warning("Paper exit blocked for %s: %s", mint[:8], exc)
+
+        first_seen = exit_rules.parse_ts(track.get("first_seen_at"))
+        decision = exit_rules.decide_exit(
+            entry_price=pos["avg_entry_price"],
+            price=price,
+            peak_price=track["peak_price"],
+            entry_liquidity_usd=track["entry_liquidity_usd"],
+            liquidity_usd=_liquidity_usd(pair),
+            held_seconds=(now_dt - first_seen).total_seconds() if first_seen else 0.0,
+            partial_taken=bool(track["partial_taken"]),
+            config=EXIT_CONFIG,
+        )
+        if decision.action == "hold":
+            continue
+
+        fraction = 1.0 if decision.action == "sell_all" else decision.fraction
+        try:
+            sold = paper.place_order(
+                conn, "automatic", mint, pos["token_name"], "sell",
+                pos["quantity"] * fraction * price, price,
+                "Automatic paper exit: " + decision.reason,
+            )
+        except ValueError as exc:
+            log.warning("Paper exit blocked for %s: %s", mint[:8], exc)
+            continue
+
+        if decision.action == "sell_all":
+            position_track.forget(conn, mint)
+        else:
+            position_track.mark_partial(conn, mint)
+        exits.append({
+            "asset_id": mint,
+            "token_name": pos["token_name"],
+            "realized_pnl_usd": sold["realized_pnl_usd"],
+            "reference_price": price,
+            "reason": decision.reason,
+            "partial": decision.action == "sell_partial",
+        })
 
     # Combine recent tracked-wallet accumulation with independent market confirmation.
     candidates = []
@@ -234,12 +296,14 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             result = paper.place_order(conn, "automatic", mint, names.get(mint) or (pair.get("baseToken") or {}).get("name"),
                                        "buy", per_trade, price,
                                        "Combined smart-money + momentum entry; score %.1f; %d tracked wallets bought in last %d minutes; market and launch-health filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES))
+            position_track.forget(conn, mint)
+            position_track.observe(conn, mint, result["fill_price"], price, _liquidity_usd(pair))
             entries.append({"asset_id": mint, "score": score, "market_score": market_score, "wallet_count": signal["wallet_count"], "buy_count": signal["buy_count"], "latest_buy_at": signal["latest_buy_at"], "trade_id": result["trade_id"]})
             count += 1
             break
         except ValueError as exc:
             log.info("Candidate skipped %s: %s", mint[:8], exc)
-    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits, "wallet_signal_count": len(wallet_signals)}
+    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits, "stale_positions": stale, "wallet_signal_count": len(wallet_signals)}
 
 
 async def _bubble_approved(client, mint):
@@ -320,10 +384,12 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                     try:
                         assets = scan_assets(conn, 100)
                         wallet_signals = _recent_wallet_buy_signals(conn)
+                        # Always reserve room for open positions so they continue to be re-priced.
+                        held = _held_mints(conn)
                         mints = list(dict.fromkeys(
-                            list(wallet_signals.keys())
+                            held
+                            + list(wallet_signals.keys())
                             + [a["asset_id"] for a in assets if a.get("asset_id")]
-                            + [r["asset_id"] for r in conn.execute("SELECT asset_id FROM paper_positions WHERE account_id='paper-automatic'").fetchall()]
                         ))[:150]
                         pairs = await _fetch_pairs(client, mints) if mints else {}
                         approved_mints = await _approved_candidates(client, pairs, eligible_mints=set(wallet_signals))
@@ -333,10 +399,18 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                             token = (pair.get("baseToken") or {}).get("name") or trade["asset_id"][:8]
                             await _telegram_send(client, "SIGNALFORGE PAPER BUY\n" + token + "\nEntry: $" + str(pair.get("priceUsd") or "n/a") + "\nScore: " + str(trade["score"]) + "/100\nNo real funds moved.")
                         for trade in outcome.get("exits", []):
-                            await _telegram_send(client, "SIGNALFORGE PAPER SELL\n" + str(trade.get("token_name") or trade["asset_id"][:8]) + "\nExit reference: $" + str(trade["reference_price"]) + "\nRealized paper P&L: $" + str(round(trade["realized_pnl_usd"],2)) + "\nNo real funds moved.")
-                        _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=None)
-                        log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d",
-                                 len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]))
+                            label = "PAPER PARTIAL SELL" if trade.get("partial") else "PAPER SELL"
+                            await _telegram_send(client, "SIGNALFORCE " + label + "\n" + str(trade.get("token_name") or trade["asset_id"][:8]) + "\nReason: " + str(trade.get("reason")) + "\nExit reference: $" + str(trade["reference_price"]) + "\nRealized paper P&L: $" + str(round(trade["realized_pnl_usd"],2)) + "\nNo real funds moved.")
+                        stale = outcome.get("stale_positions", [])
+                        for item in stale:
+                            last = _STALE_ALERTED.get(item["asset_id"], 0)
+                            if time.time() - last > 1800:
+                                _STALE_ALERTED[item["asset_id"]] = time.time()
+                                await _telegram_send(client, "SIGNALFORCE WARNING\nNo price for open paper position " + str(item.get("token_name") or item["asset_id"][:8]) + " for " + str(item["unpriced_seconds"] // 60) + "+ minutes. Its exit rules cannot run until a price returns.")
+                        stale_note = ("No price for open position(s): " + ", ".join(str(item.get("token_name") or item["asset_id"][:8]) for item in stale))[:300] if stale else None
+                        _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=stale_note)
+                        log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d exits=%d",
+                                 len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]), len(outcome["exits"]))
                     finally:
                         _release(conn)
                 except asyncio.CancelledError:
@@ -377,12 +451,13 @@ def bot_status(conn):
         "last_error": state["last_error"],
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
-                        "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"smart_money_lookback_minutes":SMART_MONEY_LOOKBACK_MINUTES,"minimum_distinct_wallet_buys":MIN_DISTINCT_WALLET_BUYS,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
+                        "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"smart_money_lookback_minutes":SMART_MONEY_LOOKBACK_MINUTES,"minimum_distinct_wallet_buys":MIN_DISTINCT_WALLET_BUYS,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":None},
+        "exit_rules": exit_rules.describe(EXIT_CONFIG),
         "strategy": "combined_smart_money_momentum",
         "smart_money_lookback_minutes": SMART_MONEY_LOOKBACK_MINUTES,
         "minimum_distinct_wallet_buys": MIN_DISTINCT_WALLET_BUYS,
         "single_wallet_market_score_threshold": SINGLE_WALLET_MIN_MARKET_SCORE,
-        "note": "Paper simulation only. Entries require recent buys from tracked wallets plus independent market activity, liquidity, momentum, and BubbleMaps launch-health approval. Pump.fun API is not used. Missing risk evidence is rejected; the scanner is not the full market and may make no trades."
+        "note": "Paper simulation only. Entries require recent buys from tracked wallets plus independent market activity, liquidity, momentum, and BubbleMaps launch-health approval. Exits use a hard stop, liquidity-collapse protection, uncapped trailing stop, one partial-profit sale, and a 24-hour dead-money timer. Missing risk evidence is rejected; the scanner is not the full market and may make no trades."
     }
 
 
