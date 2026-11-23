@@ -15,13 +15,18 @@ def _client():
     return TestClient(create_app(settings), base_url="https://testserver")
 
 
-def _register_and_activate(client, email):
+def _register_and_activate(client, email, monkeypatch):
+    tokens = {}
+    async def fake_send(address, token):
+        tokens[address] = token
+    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
     response = client.post("/v1/customer/register", json={
         "email": email, "password": "correct horse battery staple"
     })
     assert response.status_code == 201
-    assert response.json()["status"] == "active"
-
+    assert response.json()["status"] == "pending_verification"
+    verified = client.get("/v1/customer/verify-email", params={"token": tokens[email]})
+    assert verified.status_code == 200
 
 def _login(client, email):
     response = client.post("/v1/customer/login", json={
