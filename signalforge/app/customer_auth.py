@@ -112,7 +112,7 @@ def revoke_customer_session(conn: sqlite3.Connection, session_token: str) -> boo
 
 
 def register_customer_account(conn: sqlite3.Connection, email: str, password: str) -> str:
-    """Create an active beta account; email verification is not enabled yet."""
+    """Create a pending account that cannot sign in until email ownership is verified."""
     import re
     import uuid
 
@@ -126,7 +126,7 @@ def register_customer_account(conn: sqlite3.Connection, email: str, password: st
     now = utcnow()
     try:
         conn.execute(
-            "INSERT INTO customer_accounts(id,email,password_hash,status,created_at,updated_at) VALUES(?,?,?,'active',?,?)",
+            "INSERT INTO customer_accounts(id,email,password_hash,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)",
             (account_id, normalized, password_hash, now, now),
         )
         conn.commit()
@@ -134,3 +134,43 @@ def register_customer_account(conn: sqlite3.Connection, email: str, password: st
         conn.rollback()
         raise CustomerAuthError("An account with that email already exists.") from exc
     return account_id
+
+
+def create_email_verification_token(conn: sqlite3.Connection, account_id: str, *, lifetime_hours: int = 1) -> str:
+    """Create a one-time raw token; only its SHA-256 digest is persisted."""
+    from datetime import datetime, timedelta, timezone
+    if not isinstance(lifetime_hours, int) or not 1 <= lifetime_hours <= 24:
+        raise ValueError("Verification token lifetime must be between 1 and 24 hours.")
+    account = conn.execute("SELECT id,status FROM customer_accounts WHERE id=?", (account_id,)).fetchone()
+    if account is None or account["status"] == "suspended":
+        raise CustomerAuthError("Account is unavailable.")
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    created = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires = (now + timedelta(hours=lifetime_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute("UPDATE customer_email_verification_tokens SET consumed_at=? WHERE account_id=? AND consumed_at IS NULL",
+                 (created, account_id))
+    conn.execute("INSERT INTO customer_email_verification_tokens(token_hash,account_id,created_at,expires_at) VALUES(?,?,?,?)",
+                 (_token_hash(token), account_id, created, expires))
+    conn.commit()
+    return token
+
+
+def consume_email_verification_token(conn: sqlite3.Connection, token: str) -> bool:
+    """Consume a valid, unexpired token once and activate its account."""
+    if not isinstance(token, str) or not 20 <= len(token) <= 256:
+        return False
+    now = utcnow()
+    digest = _token_hash(token)
+    row = conn.execute(
+        "SELECT account_id FROM customer_email_verification_tokens WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?",
+        (digest, now),
+    ).fetchone()
+    if row is None:
+        return False
+    conn.execute("UPDATE customer_email_verification_tokens SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL",
+                 (now, digest))
+    conn.execute("UPDATE customer_accounts SET status='active',email_verified_at=?,updated_at=? WHERE id=? AND status='pending'",
+                 (now, now, row["account_id"]))
+    conn.commit()
+    return True
