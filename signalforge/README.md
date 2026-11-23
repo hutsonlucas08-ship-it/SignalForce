@@ -1,4 +1,4 @@
-# SignalForge Core — Stage 1 (foundation)
+# SignalForce — Solana Intelligence Platform
 
 Read-only Solana market research backend. **No wallet, no private keys, no order execution exists in this code.**
 Shadow (paper) trades are stored in separate tables that the database refuses to label as live.
