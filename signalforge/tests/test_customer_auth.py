@@ -18,6 +18,7 @@ def test_password_hash_is_salted_and_verifies():
     assert verify_password("correct horse battery staple", first)
     assert not verify_password("wrong password", first)
     assert not verify_password("anything", "malformed")
+    assert not verify_password("x" * 1025, first)
 
 
 def test_password_policy():
