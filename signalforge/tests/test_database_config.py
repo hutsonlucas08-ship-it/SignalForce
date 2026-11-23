@@ -12,7 +12,7 @@ def test_database_url_is_optional_and_defaults_to_local_sqlite(monkeypatch):
     settings = load_settings()
 
     assert settings.database_url is None
-    assert settings.db_path.endswith("signalforce.db")
+    assert settings.db_path.endswith("signalforge.db")
 
 
 @pytest.mark.parametrize(
