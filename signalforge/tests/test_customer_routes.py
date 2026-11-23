@@ -19,13 +19,8 @@ def _register_and_activate(client, email):
     response = client.post("/v1/customer/register", json={
         "email": email, "password": "correct horse battery staple"
     })
-    assert response.status_code == 202
-    activated = client.post(
-        "/v1/admin/customers/activate",
-        headers={"X-API-Key": "a" * 32},
-        json={"email": email},
-    )
-    assert activated.status_code == 200
+    assert response.status_code == 201
+    assert response.json()["status"] == "active"
 
 
 def _login(client, email):
@@ -36,7 +31,7 @@ def _login(client, email):
     return response.json()["csrf_token"]
 
 
-def test_customer_registration_requires_admin_activation_before_login():
+def test_customer_can_register_and_sign_in_without_manual_activation():
     client = _client()
     _register_and_activate(client, "one@example.test")
     csrf = _login(client, "one@example.test")
