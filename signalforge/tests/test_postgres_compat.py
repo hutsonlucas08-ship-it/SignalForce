@@ -92,3 +92,12 @@ def test_hybrid_row_factory_handles_commands_without_result_columns():
 
     make_row = _hybrid_row_factory(CommandCursor())
     assert make_row(()) == ()
+
+
+
+def test_postgres_customer_paper_trade_balance_read_uses_row_lock():
+    sql = (
+        "SELECT id,cash_balance_usd FROM customer_paper_accounts "
+        "WHERE id=? AND account_id=?"
+    )
+    assert _postgres_runtime_sql(sql).endswith("FOR UPDATE")
