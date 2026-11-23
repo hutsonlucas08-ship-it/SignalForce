@@ -72,7 +72,11 @@ def test_sync_once_deduplicates_repeated_poll(tmp_path):
         second = await sync_once(str(db), "test-key", client=fake)
         assert first["transactions_inserted"] == 1
         assert second["transactions_inserted"] == 0
-        assert second["duplicates"] == 1
+        # The signature checkpoint prevents reprocessing, so no duplicate insert is attempted.
+        assert second["duplicates"] == 0
+        conn = connect(str(db))
+        assert conn.execute("SELECT COUNT(*) FROM wallet_trade_events").fetchone()[0] == 1
+        conn.close()
     asyncio.run(run())
 
 
@@ -100,7 +104,6 @@ def test_sync_once_with_empty_watchlist_is_healthy(tmp_path):
         assert result["wallets_checked"] == 0
         assert result["wallet_errors"] == 0
     asyncio.run(run())
-
 
 
 def test_sync_once_paginates_until_previous_checkpoint(tmp_path):
