@@ -4,7 +4,7 @@ import json
 import pytest
 
 from app.db import connect, run_migrations
-from app.sources.collector import build_ws_url, run_pumpportal_collector
+from app.sources.collector import build_ws_url, redact_secrets, run_pumpportal_collector
 
 
 class FakeSocket:
@@ -106,3 +106,27 @@ def test_collector_registers_source_and_stops_cleanly(collector_db):
         "SELECT name, kind FROM data_sources WHERE name = 'pumpportal'"
     ).fetchone()
     assert tuple(row) == ("pumpportal", "websocket")
+
+
+
+def test_collector_does_not_mark_connection_or_subscription_ack_as_success(collector_db):
+    stop_event = asyncio.Event()
+    socket = FakeSocket([json.dumps({"message": "subscribed"})], stop_event)
+
+    asyncio.run(run_pumpportal_collector(
+        collector_db,
+        url="wss://example.test/feed",
+        connect=lambda *_args, **_kwargs: socket,
+        stop_event=stop_event,
+    ))
+
+    row = collector_db.execute(
+        "SELECT last_success_at FROM data_sources WHERE name='pumpportal'"
+    ).fetchone()
+    assert row["last_success_at"] is None
+
+
+def test_collector_redacts_api_keys_from_error_text():
+    assert redact_secrets("failed at wss://example.test/?api-key=supersecret&x=1") == (
+        "failed at wss://example.test/?api-key=[redacted]&x=1"
+    )
