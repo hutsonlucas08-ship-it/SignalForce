@@ -31,7 +31,7 @@ def test_paper_bot_fails_closed_when_liquidity_is_missing():
     pair["liquidity"] = {}
     score, reason = _score(pair)
     assert score is None
-    assert reason == "Liquidity below $15,000 or missing"
+    assert reason == "Liquidity below $5,000 or missing"
 
 from app.db import connect, run_migrations
 from app.paper_bot import bot_status, configure_bot
@@ -100,13 +100,13 @@ def test_recent_smart_money_signal_requires_two_distinct_tracked_wallets_for_nor
     assert outcome["entries"][0]["market_score"] > 0
 
 
-def test_paper_bot_does_not_enter_on_momentum_without_tracked_wallet_buy():
+def test_aggressive_paper_bot_can_enter_on_strong_momentum_without_wallet_signal():
     conn = _paper_strategy_db()
     mint = "TokenMint222222222222222222222222222"
     outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Momentum Only"}],
-                               {mint: candidate_pair()}, approved_mints={mint})
-    assert outcome["entries"] == []
-    assert outcome["candidate_count"] == 0
+                               {mint: candidate_pair()})
+    assert len(outcome["entries"]) == 1
+    assert outcome["entries"][0]["wallet_count"] == 0
 
 
 def test_old_tracked_wallet_buys_do_not_trigger_new_entry():
@@ -120,11 +120,11 @@ def test_old_tracked_wallet_buys_do_not_trigger_new_entry():
     assert outcome["wallet_signal_count"] == 0
 
 
-def test_single_wallet_buy_needs_exceptionally_strong_market_score():
+def test_aggressive_paper_bot_accepts_one_wallet_buy_with_moderate_market_score():
     conn = _paper_strategy_db()
     mint = "TokenMint444444444444444444444444444"
     _seed_recent_wallet_buy(conn, "WalletAddress5555555555555555555555", mint)
     outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Single Wallet"}],
-                               {mint: candidate_pair()}, approved_mints={mint})
-    assert outcome["entries"] == []
-    assert outcome["candidate_count"] == 0
+                               {mint: candidate_pair()})
+    assert len(outcome["entries"]) == 1
+    assert outcome["entries"][0]["wallet_count"] == 1
