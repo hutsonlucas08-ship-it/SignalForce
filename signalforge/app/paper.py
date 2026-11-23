@@ -92,8 +92,8 @@ def place_order(conn, strategy, asset_id, token_name, side, amount_usd, referenc
         else: conn.execute("UPDATE paper_positions SET quantity=?,cost_basis=?,last_price=?,updated_at=? WHERE id=?",
             (remain,pos["cost_basis"]*remain/pos["quantity"],reference_price,now,pos["id"]))
         conn.execute("UPDATE paper_accounts SET cash_balance=cash_balance+?,updated_at=? WHERE id=?",(proceeds,now,aid))
-    cur=conn.execute("""INSERT INTO paper_trades(account_id,asset_id,token_name,side,quantity,reference_price,fill_price,gross_usd,fee_usd,realized_pnl_usd,reason,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(aid,asset_id,token_name,side,qty,reference_price,fill,gross,fee,realized,str(reason)[:200],now))
+    cur=conn.execute("""INSERT INTO paper_trades(account_id,asset_id,token_name,side,quantity,reference_price,fill_price,gross_usd,fee_usd,realized_pnl_usd,reason,created_at,session_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",(aid,asset_id,token_name,side,qty,reference_price,fill,gross,fee,realized,str(reason)[:200],now,session_id))
     _activity(conn,aid,side,"Paper "+side.upper()+" "+(token_name or asset_id[:8])+" | USD "+format(gross,".2f"),
         {"trade_id":cur.lastrowid,"asset_id":asset_id,"quantity":qty,"reference_price":reference_price,"fill_price":fill,"fee_usd":fee,"realized_pnl_usd":realized,"reason":reason,"mode":"paper"})
     conn.commit()
