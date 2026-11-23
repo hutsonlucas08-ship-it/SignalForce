@@ -86,12 +86,21 @@ def test_sync_once_records_provider_failure(tmp_path):
         setup_db(db)
         result = await sync_once(str(db), "test-key", client=FakeHelius(status=401))
         assert result["wallet_errors"] == 1
+        assert result["wallet_failures"] == [
+            {"wallet": f"{WALLET[:6]}…{WALLET[-4:]}", "reason": "http_401"}
+        ]
         conn = connect(str(db))
         source = conn.execute(
             "SELECT consecutive_failures FROM data_sources WHERE name=?",
             ("helius_wallet_sync",),
         ).fetchone()
         assert source[0] == 1
+        detail = conn.execute(
+            "SELECT last_error FROM data_sources WHERE name=?",
+            ("helius_wallet_sync",),
+        ).fetchone()[0]
+        assert "http_401" in detail
+        assert WALLET[:6] in detail
         conn.close()
     asyncio.run(run())
 
