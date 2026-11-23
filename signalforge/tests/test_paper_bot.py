@@ -116,3 +116,13 @@ def test_old_tracked_wallet_buys_do_not_trigger_new_entry():
                                {mint: candidate_pair()}, approved_mints={mint})
     assert outcome["entries"] == []
     assert outcome["wallet_signal_count"] == 0
+
+
+def test_single_wallet_buy_needs_exceptionally_strong_market_score():
+    conn = _paper_strategy_db()
+    mint = "TokenMint444444444444444444444444444"
+    _seed_recent_wallet_buy(conn, "WalletAddress5555555555555555555555", mint)
+    outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Single Wallet"}],
+                               {mint: candidate_pair()}, approved_mints={mint})
+    assert outcome["entries"] == []
+    assert outcome["candidate_count"] == 0
