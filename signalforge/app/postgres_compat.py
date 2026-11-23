@@ -27,6 +27,13 @@ def translate_migration_sql(sql: str, migration_name: str = "") -> str:
         """to_char(timezone('utc', CURRENT_TIMESTAMP), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')""",
         translated,
     )
+    # SQLite stores CURRENT_TIMESTAMP as text; PostgreSQL's value is a timestamp.
+    translated = re.sub(
+        r"\\bupdated_at\\s*=\\s*CURRENT_TIMESTAMP\\b",
+        """updated_at=to_char(timezone('utc', CURRENT_TIMESTAMP), 'YYYY-MM-DD"T"HH24:MI:SS"Z"')""",
+        translated,
+        flags=re.IGNORECASE,
+    )
 
     # PostgreSQL has no column-level NOCASE collation. Customer emails are
     # normalized by the application; this expression index preserves the DB
