@@ -25,12 +25,17 @@ async def sync_once(db_path: str, api_key: str, *, client=None, limit: int = 100
     conn = connect(db_path)
     totals = {"wallets_checked": 0, "wallets_succeeded": 0,
               "transactions_parsed": 0, "transactions_inserted": 0,
-              "duplicates": 0, "wallet_errors": 0, "wallet_failures": []}
+              "duplicates": 0, "wallet_errors": 0, "wallet_failures": [],
+              "wallets_unavailable": 0, "wallets_quarantined": 0}
     try:
         store.register_source(conn, SOURCE_NAME, "helius_polling")
         wallets = conn.execute(
-            "SELECT wallet_address, last_signature FROM tracked_wallets ORDER BY added_at, id"
+            "SELECT wallet_address, last_signature FROM tracked_wallets "
+            "WHERE helius_status='active' ORDER BY added_at, id"
         ).fetchall()
+        totals["wallets_quarantined"] = conn.execute(
+            "SELECT COUNT(*) FROM tracked_wallets WHERE helius_status='quarantined'"
+        ).fetchone()[0]
         page_limit = max(1, min(int(limit), 100))
         for row in wallets:
             wallet = row["wallet_address"]
@@ -81,12 +86,17 @@ async def sync_once(db_path: str, api_key: str, *, client=None, limit: int = 100
                         raise ValueError("Helius page did not contain a pagination signature")
 
                 if caught_up:
+                    conn.execute(
+                        "UPDATE tracked_wallets SET helius_status='active', helius_404_count=0, "
+                        "helius_last_error=NULL, last_seen_at=? WHERE wallet_address=?",
+                        (utcnow(), wallet),
+                    )
                     if newest_signature:
                         conn.execute(
-                            "UPDATE tracked_wallets SET last_signature=?, last_seen_at=? WHERE wallet_address=?",
-                            (newest_signature, utcnow(), wallet),
+                            "UPDATE tracked_wallets SET last_signature=? WHERE wallet_address=?",
+                            (newest_signature, wallet),
                         )
-                        conn.commit()
+                    conn.commit()
                     totals["wallets_succeeded"] += 1
                 else:
                     # Keep the old checkpoint so the next cycle resumes without silently skipping history.
@@ -96,12 +106,32 @@ async def sync_once(db_path: str, api_key: str, *, client=None, limit: int = 100
                     totals["wallet_failures"].append(failure)
                     log.warning("Helius polling page cap reached for wallet %s; checkpoint retained", failure["wallet"])
             except httpx.HTTPStatusError as exc:
-                totals["wallet_errors"] += 1
-                failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}",
-                           "reason": f"http_{exc.response.status_code}"}
-                totals["wallet_failures"].append(failure)
-                log.warning("Helius polling failed for wallet %s (HTTP %s)",
-                            failure["wallet"], exc.response.status_code)
+                status_code = exc.response.status_code
+                if status_code == 404:
+                    count_row = conn.execute(
+                        "SELECT helius_404_count FROM tracked_wallets WHERE wallet_address=?",
+                        (wallet,),
+                    ).fetchone()
+                    count = (count_row["helius_404_count"] if count_row else 0) + 1
+                    quarantined = count >= 3
+                    conn.execute(
+                        "UPDATE tracked_wallets SET helius_404_count=?, helius_status=?, "
+                        "helius_last_error='http_404' WHERE wallet_address=?",
+                        (count, "quarantined" if quarantined else "active", wallet),
+                    )
+                    conn.commit()
+                    totals["wallets_unavailable"] += 1
+                    if quarantined:
+                        totals["wallets_quarantined"] += 1
+                    log.warning("Helius returned HTTP 404 for wallet %s (consecutive=%s, quarantined=%s)",
+                                f"{wallet[:6]}…{wallet[-4:]}", count, quarantined)
+                else:
+                    totals["wallet_errors"] += 1
+                    failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}",
+                               "reason": f"http_{status_code}"}
+                    totals["wallet_failures"].append(failure)
+                    log.warning("Helius polling failed for wallet %s (HTTP %s)",
+                                failure["wallet"], status_code)
             except httpx.TimeoutException:
                 totals["wallet_errors"] += 1
                 failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}", "reason": "timeout"}
