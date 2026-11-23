@@ -211,9 +211,10 @@ def place_paper_trade(
         (paper_account_id, asset_id.strip(), token_name, side, quantity, float(price_usd),
          float(amount_usd), realized, reason.strip(), now),
     )
+    trade_id = cursor.fetchone()["id"]
     conn.commit()
     return {
-        "trade_id": cursor.fetchone()["id"], "side": side, "asset_id": asset_id.strip(),
+        "trade_id": trade_id, "side": side, "asset_id": asset_id.strip(),
         "quantity": quantity, "price_usd": float(price_usd), "amount_usd": float(amount_usd),
         "realized_pnl_usd": realized, "cash_balance_usd": new_cash,
     }
