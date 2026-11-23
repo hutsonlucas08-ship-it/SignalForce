@@ -565,6 +565,49 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "note": "Connectivity only. This does not mean wallet discovery or continuous trade ingestion is running.",
         }
 
+    @app.get("/v1/integrations/helius/worker-status")
+    def helius_worker_status(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        """Report actual in-process worker state separately from provider connectivity."""
+        task = app.state.helius_sync_task
+        configured = bool(os.getenv("HELIUS_API_KEY"))
+        if not configured:
+            worker_state = "disabled"
+        elif task is None:
+            worker_state = "not_started"
+        elif task.cancelled():
+            worker_state = "stopped"
+        elif task.done():
+            worker_state = "failed"
+        else:
+            worker_state = "running"
+
+        source = conn.execute(
+            "SELECT last_success_at, last_error_at, last_error, consecutive_failures "
+            "FROM data_sources WHERE name=?",
+            ("helius_wallet_sync",),
+        ).fetchone()
+        wallet_count = conn.execute("SELECT COUNT(*) FROM tracked_wallets").fetchone()[0]
+        last_wallet_sync = conn.execute(
+            "SELECT MAX(last_seen_at) FROM tracked_wallets"
+        ).fetchone()[0]
+        latest_trade = conn.execute(
+            "SELECT MAX(occurred_at) FROM wallet_trade_events"
+        ).fetchone()[0]
+        return {
+            "configured": configured,
+            "worker_state": worker_state,
+            "worker_running": worker_state == "running",
+            "tracked_wallet_count": wallet_count,
+            "last_success_at": source["last_success_at"] if source else None,
+            "last_error_at": source["last_error_at"] if source else None,
+            "last_error": source["last_error"] if source else None,
+            "consecutive_failures": source["consecutive_failures"] if source else 0,
+            "last_wallet_sync_at": last_wallet_sync,
+            "latest_trade_at": latest_trade,
+            "poll_interval_seconds": 60,
+            "note": "Worker state is process-local. A running task does not guarantee the last poll succeeded; check last_success_at and consecutive_failures.",
+        }
+
     @app.get("/v1/copytraders/wallets")
     def tracked_wallets(_: Principal = Depends(require_read), conn=Depends(get_conn)):
         rows = conn.execute("SELECT * FROM tracked_wallets ORDER BY added_at DESC").fetchall()
