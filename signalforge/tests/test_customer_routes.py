@@ -3,7 +3,8 @@ from fastapi.testclient import TestClient
 from cryptography.fernet import Fernet
 
 from app.config import Settings
-from app.main import create_app\nfrom app import customer_email
+from app.main import create_app
+from app import customer_email
 
 
 def _client():
