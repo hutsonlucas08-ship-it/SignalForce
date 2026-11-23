@@ -13,10 +13,10 @@ def test_session_overview_excludes_previous_simulation_activity_and_positions():
     conn.commit()
 
     started = utcnow()
-    paper.place_order(conn, "automatic", "new-token", "New Token", "buy", 100, 1, "session entry")
-    paper.place_order(conn, "automatic", "new-token", "New Token", "sell", 20, 2, "session partial exit")
+    paper.place_order(conn, "automatic", "new-token", "New Token", "buy", 100, 1, "session entry", session_id="session-1")
+    paper.place_order(conn, "automatic", "new-token", "New Token", "sell", 20, 2, "session partial exit", session_id="session-1")
 
-    result = paper.session_overview(conn, started, active=True)
+    result = paper.session_overview(conn, started, active=True, session_id="session-1")
 
     assert result["active"] is True
     assert result["trade_count"] == 2
