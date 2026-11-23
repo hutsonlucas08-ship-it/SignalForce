@@ -74,3 +74,12 @@ def test_all_checked_in_migrations_translate_known_sqlite_syntax():
         assert "INSERT OR IGNORE" not in upper, migration.name
         assert "COLLATE NOCASE" not in upper, migration.name
         assert "STRFTIME(" not in upper, migration.name
+
+
+
+def test_translates_current_timestamp_assignment_to_text():
+    result = translate_migration_sql(
+        "UPDATE customer_accounts SET updated_at=CURRENT_TIMESTAMP;",
+        "015_activate_existing_beta_accounts.sql",
+    )
+    assert "updated_at=to_char(timezone('utc', CURRENT_TIMESTAMP)" in result
