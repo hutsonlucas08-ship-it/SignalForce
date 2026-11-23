@@ -13,7 +13,7 @@ The migration branch now includes an initial dual-backend database layer:
 - The paper-bot lease uses a PostgreSQL row lock when the adapter is active.
 - Runtime inserts in the audited paths use portable `ON CONFLICT DO NOTHING` and `RETURNING id` forms.
 
-This is an implementation slice, not a production-ready cutover. It has **not** been executed against a live PostgreSQL database, and the full SQLite test suite has not yet been run against this branch in this work session.
+This is an implementation slice, not a production-ready cutover. GitHub Actions run #206 passed the full SQLite suite (202 passed, 5 skipped) and the PostgreSQL 16 integration suite (5 passed). The PostgreSQL tests cover migration application, case-insensitive email uniqueness, generated IDs, conflict handling, the paper-bot row lock, and FastAPI health startup. A live Neon project has not yet been tested, and no production data migration has been performed.
 
 ## Target deployment (zero-cost beta)
 
