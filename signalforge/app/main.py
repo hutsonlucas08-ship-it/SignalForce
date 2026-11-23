@@ -987,10 +987,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         mints = [row["asset_id"] for row in rows]
         observed_at = utcnow()
         if not mints:
-            return {"prices": {}, "observed_at": observed_at, "source": "DexScreener", "position_count": 0}
+            return {"prices": {}, "market_caps": {}, "images": {}, "observed_at": observed_at, "source": "DexScreener", "position_count": 0}
         async with httpx.AsyncClient(timeout=4.0, headers={"Accept": "application/json"}) as client:
             pairs = await paper_bot._fetch_pairs(client, mints)
         prices = {}
+        market_caps = {}
         images = {}
         for mint, pair in pairs.items():
             info = pair.get("info") or {}
@@ -999,18 +1000,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 images[mint] = image_url
             try:
                 price = float(pair.get("priceUsd"))
+                if price > 0:
+                    prices[mint] = price
             except (TypeError, ValueError):
-                continue
-            if price > 0:
-                prices[mint] = price
+                pass
+            # Only label an explicit provider marketCap as market cap.
+            # FDV is not interchangeable and must not be presented as MC.
+            try:
+                market_cap = float(pair.get("marketCap"))
+                if market_cap > 0:
+                    market_caps[mint] = market_cap
+            except (TypeError, ValueError):
+                pass
         return {
             "prices": prices,
+            "market_caps": market_caps,
             "images": images,
             "observed_at": utcnow(),
             "source": "DexScreener",
             "position_count": len(mints),
             "priced_count": len(prices),
-            "note": "Display-only live marks. Automated paper exit rules still run on the bot's 30-second strategy cycle.",
+            "market_cap_count": len(market_caps),
+            "note": "Live display-only price and market-cap quotes. Market cap is shown only when the provider supplies it; FDV is not substituted. Automated paper exit rules still run on the bot's 30-second strategy cycle.",
         }
 
     @app.post("/v1/paper/orders")
