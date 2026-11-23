@@ -26,6 +26,7 @@ from .sources.helius_worker import run_helius_sync
 log = logging.getLogger("signalforge")
 _price_history = {}
 _bubble_cache = {}
+_launch_cache = {}
 
 
 class HaltRequest(BaseModel):
@@ -452,43 +453,83 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return build_brain_report(conn, asset_id, settings.stale_after_seconds)
 
 
-    @app.get("/v1/research/pumpfun-callouts")
-    async def pumpfun_callouts(_: Principal = Depends(require_read)):
-        """Newest Pump.fun callouts; requires an approved server-side developer API key."""
-        key = os.getenv("PUMPFUN_API_KEY")
-        if not key:
-            return {"configured": False, "callouts": [],
-                    "note": "Add PUMPFUN_API_KEY as a Codespaces secret after Pump.fun approves a free Developer API application. The key must stay server-side."}
+    @app.get("/v1/research/new-launches")
+    async def research_new_launches(_: Principal = Depends(require_read)):
+        """Return the newest Solana pools and token artwork from public GeckoTerminal data."""
+        now = time.time()
+        cached = _launch_cache.get("solana")
+        if cached and now - cached[0] < 45:
+            return cached[1]
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=8.0) as client:
                 response = await client.get(
-                    "https://api.pump.fun/v1/home-feed/new",
-                    params={"pageSize": 50, "chain": "solana", "updatesLimit": 3},
-                    headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+                    "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
+                    params={"include": "base_token,quote_token,dex", "page": 1},
+                    headers={"Accept": "application/json"},
                 )
                 response.raise_for_status()
                 payload = response.json()
-            return {"configured": True, "callouts": payload.get("coins", []) if isinstance(payload, dict) else [],
-                    "next_page_token": payload.get("nextPageToken") if isinstance(payload, dict) else None,
-                    "source": "Pump.fun Developer API · newest-first Solana callouts"}
-        except (httpx.HTTPError, ValueError):
-            log.warning("Pump.fun callout feed request failed")
-            raise HTTPException(status_code=502, detail="Pump.fun callout feed is temporarily unavailable or the API key lacks content.read access")
+            included = {
+                item.get("id"): item.get("attributes") or {}
+                for item in (payload.get("included") or [])
+                if isinstance(item, dict) and item.get("type") == "token"
+            }
+            launches = []
+            for pool in payload.get("data") or []:
+                if not isinstance(pool, dict):
+                    continue
+                attrs = pool.get("attributes") or {}
+                relationships = pool.get("relationships") or {}
+                base_ref = ((relationships.get("base_token") or {}).get("data") or {})
+                token = included.get(base_ref.get("id"), {})
+                address = token.get("address")
+                if not isinstance(address, str) or not address:
+                    continue
+                image = token.get("image_url")
+                if not isinstance(image, str) or not image.startswith("https://"):
+                    image = None
+                dex_ref = ((relationships.get("dex") or {}).get("data") or {})
+                pool_id = pool.get("id") or ""
+                launches.append({
+                    "asset_id": address,
+                    "name": token.get("name") or address[:8],
+                    "symbol": token.get("symbol") or "",
+                    "image_url": image,
+                    "pool_address": pool_id.split("_", 1)[-1],
+                    "pool_created_at": attrs.get("pool_created_at"),
+                    "price_usd": attrs.get("base_token_price_usd"),
+                    "liquidity_usd": attrs.get("reserve_in_usd"),
+                    "volume_24h_usd": (attrs.get("volume_usd") or {}).get("h24"),
+                    "dex": dex_ref.get("id"),
+                    "source": "GeckoTerminal",
+                })
+            result = {
+                "launches": launches[:10],
+                "count": len(launches[:10]),
+                "source": "GeckoTerminal public Solana new-pools feed",
+                "note": "New pool creation is a discovery signal, not proof of a legitimate launch or a safe token. Artwork is provider-supplied and may be unavailable.",
+            }
+            _launch_cache["solana"] = (now, result)
+            return result
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            log.warning("GeckoTerminal new-pools feed unavailable")
+            raise HTTPException(status_code=502, detail="GeckoTerminal's Solana new-pools feed is temporarily unavailable")
 
     @app.get("/v1/research/trending-now")
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        """Rank recently discovered Solana tokens using live DEX Screener activity."""
         assets = scan_assets(conn, 50)
         mints = [a["asset_id"] for a in assets if a.get("asset_id")]
-        async with httpx.AsyncClient(timeout=3.5) as client:
-            pump_mints, pump_names = await paper_bot._pumpfun_discoveries(client)
-            for mint in pump_mints:
-                if mint not in mints:
-                    mints.append(mint)
+        async with httpx.AsyncClient(timeout=5.0) as client:
             pairs = await paper_bot._fetch_pairs(client, mints) if mints else {}
         names = {a["asset_id"]: a.get("token_name") for a in assets}
-        names.update(pump_names)
+        images = {a["asset_id"]: a.get("image_url") for a in assets}
         if not mints:
-            return {"candidates": [], "scanned": 0, "note": "No PumpPortal assets or Pump.fun feed candidates yet."}
+            return {
+                "candidates": [], "scanned": 0, "priced": 0, "rejected": 0,
+                "source": "DEX Screener market data",
+                "note": "No locally discovered Solana tokens are available to rank yet.",
+            }
         candidates, rejected = [], 0
         for mint, pair in pairs.items():
             score, reason = paper_bot._score(pair)
@@ -496,22 +537,29 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 rejected += 1
                 continue
             base = pair.get("baseToken") or {}
+            info = pair.get("info") or {}
             candidates.append({
-                "asset_id": mint, "name": names.get(mint) or base.get("name") or mint[:8],
-                "symbol": base.get("symbol"), "score": score,
-                "price_usd": pair.get("priceUsd"), "market_cap_usd": pair.get("marketCap") or pair.get("fdv"),
+                "asset_id": mint,
+                "name": names.get(mint) or base.get("name") or mint[:8],
+                "symbol": base.get("symbol"),
+                "image_url": info.get("imageUrl") or images.get(mint),
+                "score": score,
+                "price_usd": pair.get("priceUsd"),
+                "market_cap_usd": pair.get("marketCap") or pair.get("fdv"),
                 "liquidity_usd": (pair.get("liquidity") or {}).get("usd"),
                 "volume_5m_usd": (pair.get("volume") or {}).get("m5"),
                 "buys_5m": ((pair.get("txns") or {}).get("m5") or {}).get("buys"),
                 "sells_5m": ((pair.get("txns") or {}).get("m5") or {}).get("sells"),
                 "price_change_5m_pct": ((pair.get("priceChange") or {}).get("m5")),
-                "source": "DexScreener",
+                "source": "DEX Screener",
             })
         candidates.sort(key=lambda x: x["score"], reverse=True)
-        return {"candidates": candidates[:20], "scanned": len(mints), "priced": len(pairs),
-                "rejected": rejected, "source": "Pump.fun trending + newest callouts (when API key configured), PumpPortal launches, and DexScreener market data",
-                "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
-                "note": "Coverage expands with an approved Pump.fun API key; otherwise this scans PumpPortal-discovered assets only. Candidates must pass live liquidity, 5m activity, buy-pressure and momentum filters. No score guarantees safety or profit."}
+        return {
+            "candidates": candidates[:20], "scanned": len(mints),
+            "priced": len(pairs), "rejected": rejected,
+            "source": "DEX Screener live pair activity across SignalForge-discovered Solana tokens",
+            "note": "Ranks only tokens SignalForge has discovered, using liquidity, volume, transaction activity and momentum. It is not a complete market-wide trending list. No score guarantees safety or profit.",
+        }
 
     @app.get("/v1/integrations/helius/status")
     async def helius_integration_status(_: Principal = Depends(require_read)):
