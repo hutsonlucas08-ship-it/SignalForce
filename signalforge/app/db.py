@@ -24,8 +24,9 @@ class HybridRow(dict):
     """Mapping row that also supports SQLite-style integer column indexing."""
 
     def __init__(self, columns, values):
+        values = tuple(values)
         super().__init__(zip(columns, values))
-        self._values = tuple(values)
+        self._values = values
 
     def __getitem__(self, key):
         if isinstance(key, int):
