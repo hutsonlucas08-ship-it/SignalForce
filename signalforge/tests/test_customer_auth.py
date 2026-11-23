@@ -60,3 +60,27 @@ def test_pending_or_missing_accounts_cannot_get_sessions():
     _account(conn, status="pending")
     with pytest.raises(CustomerAuthError):
         create_customer_session(conn, "acct-1")
+
+
+def test_registration_creates_pending_account_and_normalizes_email():
+    from app.customer_auth import register_customer_account
+    conn = connect(":memory:")
+    run_migrations(conn)
+    account_id = register_customer_account(conn, "  Person@Example.Test ", "correct horse battery staple")
+    row = conn.execute("SELECT email,status,password_hash FROM customer_accounts WHERE id=?", (account_id,)).fetchone()
+    assert row["email"] == "person@example.test"
+    assert row["status"] == "pending"
+    assert verify_password("correct horse battery staple", row["password_hash"])
+    with pytest.raises(CustomerAuthError):
+        create_customer_session(conn, account_id)
+
+
+def test_registration_rejects_invalid_email_and_duplicate_email():
+    from app.customer_auth import register_customer_account
+    conn = connect(":memory:")
+    run_migrations(conn)
+    with pytest.raises(ValueError):
+        register_customer_account(conn, "not-an-email", "correct horse battery staple")
+    register_customer_account(conn, "person@example.test", "correct horse battery staple")
+    with pytest.raises(CustomerAuthError):
+        register_customer_account(conn, "PERSON@example.test", "another correct horse battery staple")
