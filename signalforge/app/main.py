@@ -6,6 +6,7 @@ import os
 import time
 from urllib.parse import urlparse
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from typing import Optional
@@ -217,7 +218,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def customer_resend_verification(body: CustomerActivateRequest, request: Request, conn=Depends(get_conn)):
         customer_rate_limit(request, "verification")
         email = body.email.strip().lower()
-        row = conn.execute("SELECT id,status FROM customer_accounts WHERE email=? COLLATE NOCASE", (email,)).fetchone()
+        row = conn.execute("SELECT id,status FROM customer_accounts WHERE LOWER(email)=LOWER(?)", (email,)).fetchone()
         # Generic response prevents account enumeration.
         if row is not None and row["status"] == "pending":
             token = customer_auth.create_email_verification_token(conn, row["id"])
@@ -1071,7 +1072,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         address = body.wallet_address.strip()
         if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
             raise HTTPException(status_code=422, detail="Enter a valid-looking Solana public wallet address")
-        conn.execute("INSERT OR IGNORE INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+        conn.execute("INSERT INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                      (address, body.label or address[:6]+"…"+address[-4:], utcnow()))
         conn.commit()
         return {"added": True, "wallet_address": address, "label": body.label or address[:6]+"…"+address[-4:]}
@@ -1167,13 +1168,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="minimum_wallets must be between 2 and 50")
         if limit < 1 or limit > 200:
             raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = conn.execute(
             "SELECT wallet_address, signature, mint, token_name, token_symbol, side, "
             "price_usd, market_cap_usd, occurred_at, source "
             "FROM wallet_trade_events WHERE side='buy' "
-            "AND occurred_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now', ?) "
+            "AND occurred_at >= ? "
             "ORDER BY occurred_at DESC LIMIT 10000",
-            (f"-{hours_back} hours",),
+            (cutoff,),
         ).fetchall()
         overlaps = find_wallet_overlap([dict(row) for row in rows], minimum_wallets)
         return {
