@@ -14,9 +14,9 @@ MAX_OPEN_POSITIONS = 10
 def ensure_accounts(conn):
     now = utcnow()
     for strategy in ("automatic", "approval"):
-        conn.execute("""INSERT OR IGNORE INTO paper_accounts
+        conn.execute("""INSERT INTO paper_accounts
             (id,strategy,starting_balance,cash_balance,enabled,created_at,updated_at)
-            VALUES (?,?,?,?,1,?,?)""",
+            VALUES (?,?,?,?,1,?,?) ON CONFLICT DO NOTHING""", 
             ("paper-" + strategy, strategy, STARTING_BALANCE, STARTING_BALANCE, now, now))
     conn.commit()
 
@@ -97,9 +97,10 @@ def place_order(conn, strategy, asset_id, token_name, side, amount_usd, referenc
             (remain,pos["cost_basis"]*remain/pos["quantity"],reference_price,now,pos["id"]))
         conn.execute("UPDATE paper_accounts SET cash_balance=cash_balance+?,updated_at=? WHERE id=?",(proceeds,now,aid))
     cur=conn.execute("""INSERT INTO paper_trades(account_id,asset_id,token_name,side,quantity,reference_price,fill_price,gross_usd,fee_usd,realized_pnl_usd,reason,created_at,session_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",(aid,asset_id,token_name,side,qty,reference_price,fill,gross,fee,realized,str(reason)[:200],now,session_id))
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id""",(aid,asset_id,token_name,side,qty,reference_price,fill,gross,fee,realized,str(reason)[:200],now,session_id))
+    trade_id = cur.fetchone()["id"]
     _activity(conn,aid,side,"Paper "+side.upper()+" "+(token_name or asset_id[:8])+" | USD "+format(gross,".2f"),
-        {"trade_id":cur.lastrowid,"asset_id":asset_id,"quantity":qty,"reference_price":reference_price,"fill_price":fill,"fee_usd":fee,"realized_pnl_usd":realized,"reason":reason,"mode":"paper"})
+        {"trade_id":trade_id,"asset_id":asset_id,"quantity":qty,"reference_price":reference_price,"fill_price":fill,"fee_usd":fee,"realized_pnl_usd":realized,"reason":reason,"mode":"paper"})
     conn.commit()
     return {"trade_id":cur.lastrowid,"strategy":strategy,"mode":"paper","side":side,"asset_id":asset_id,"quantity":qty,
         "reference_price":reference_price,"fill_price":fill,"gross_usd":gross,"fee_usd":fee,"realized_pnl_usd":realized,
