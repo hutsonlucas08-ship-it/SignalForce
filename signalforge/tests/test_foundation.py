@@ -254,20 +254,32 @@ def test_geckoterminal_new_launches_returns_token_artwork(monkeypatch):
                         "volume_usd": {"h24": "12000"},
                     },
                     "relationships": {
-                        "base_token": {"data": {"id": "solana_mint123"}},
+                        "base_token": {"data": {"id": "solana_wrapped"}},
+                        "quote_token": {"data": {"id": "solana_mint123"}},
                         "dex": {"data": {"id": "raydium"}},
                     },
                 }],
-                "included": [{
-                    "id": "solana_mint123",
-                    "type": "token",
-                    "attributes": {
-                        "address": "MintAddress123",
-                        "name": "Example Coin",
-                        "symbol": "EX",
-                        "image_url": "https://images.example/token.png",
+                "included": [
+                    {
+                        "id": "solana_wrapped",
+                        "type": "token",
+                        "attributes": {
+                            "address": "So11111111111111111111111111111111111111112",
+                            "name": "Wrapped SOL",
+                            "symbol": "SOL",
+                        },
                     },
-                }],
+                    {
+                        "id": "solana_mint123",
+                        "type": "token",
+                        "attributes": {
+                            "address": "MintAddress123",
+                            "name": "Example Coin",
+                            "symbol": "EX",
+                            "image_url": "https://images.example/token.png",
+                        },
+                    },
+                ],
             }
 
     class FakeAsyncClient:
