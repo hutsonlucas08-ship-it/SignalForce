@@ -348,3 +348,51 @@ def test_helius_worker_status_reports_disabled_without_secret(monkeypatch):
     assert body["configured"] is False
     assert body["worker_state"] == "disabled"
     assert body["worker_running"] is False
+
+
+def test_bulk_add_wallets_imports_many_and_skips_duplicates():
+    c, _ = make_client()
+    addresses = [
+        "11111111111111111111111111111111",
+        "Vote111111111111111111111111111111111111111",
+        "11111111111111111111111111111111",
+    ]
+    response = c.post("/v1/copytraders/wallets/bulk", headers=h(READ),
+                      json={"wallet_addresses": addresses})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["submitted_count"] == 3
+    assert body["unique_valid_count"] == 2
+    assert body["added_count"] == 2
+    assert body["duplicate_count"] == 1
+    assert body["invalid_count"] == 0
+    wallets = c.get("/v1/copytraders/wallets", headers=h(READ)).json()["wallets"]
+    assert {w["wallet_address"] for w in wallets} == set(addresses[:2])
+
+
+def test_bulk_add_wallets_skips_invalid_and_existing_addresses():
+    c, _ = make_client()
+    existing = "11111111111111111111111111111111"
+    c.post("/v1/copytraders/wallets", headers=h(READ), json={"wallet_address": existing})
+    response = c.post("/v1/copytraders/wallets/bulk", headers=h(READ),
+                      json={"wallet_addresses": [existing, "not-a-wallet", "Vote111111111111111111111111111111111111111"]})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["added_count"] == 1
+    assert body["duplicate_count"] == 1
+    assert body["invalid_count"] == 1
+    assert body["invalid_addresses"] == ["not-a-wallet"]
+
+
+def test_bulk_add_wallets_requires_read_auth():
+    c, _ = make_client()
+    assert c.post("/v1/copytraders/wallets/bulk", json={
+        "wallet_addresses": ["11111111111111111111111111111111"]
+    }).status_code == 401
+
+
+def test_bulk_add_wallets_caps_request_at_one_thousand_addresses():
+    c, _ = make_client()
+    response = c.post("/v1/copytraders/wallets/bulk", headers=h(READ),
+                      json={"wallet_addresses": ["11111111111111111111111111111111"] * 1001})
+    assert response.status_code == 422
