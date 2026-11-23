@@ -6,6 +6,19 @@ import uuid
 import pytest
 
 from app.config import Settings
+from app import customer_email
+from app.customer_auth import (
+    CustomerAuthError, authenticate_customer_session, consume_email_verification_token,
+    create_customer_session, create_email_verification_token, register_customer_account,
+)
+from app.customer_data import (
+    add_wallet, create_paper_account, list_paper_positions, list_paper_trades,
+    list_wallets, place_paper_trade,
+)
+from app.customer_integrations import (
+    get_customer_integration_status, load_customer_integration, save_customer_integration,
+)
+from cryptography.fernet import Fernet
 from app.db import connect, run_migrations, utcnow
 from app.main import create_app
 from fastapi.testclient import TestClient
@@ -113,3 +126,124 @@ def test_fastapi_application_starts_and_serves_health_on_postgres(postgres_conne
     with TestClient(create_app(settings)) as client:
         response = client.get("/health")
     assert response.status_code == 200
+
+
+
+def test_postgres_customer_registration_verification_and_session_lifecycle(postgres_connection):
+    conn = postgres_connection
+    email = uuid.uuid4().hex + "@customer.test"
+    account_id = register_customer_account(conn, email.upper(), "correct horse battery staple")
+    with pytest.raises(CustomerAuthError):
+        create_customer_session(conn, account_id)
+
+    token = create_email_verification_token(conn, account_id)
+    stored = conn.execute(
+        "SELECT token_hash FROM customer_email_verification_tokens WHERE account_id=?",
+        (account_id,),
+    ).fetchone()
+    assert token not in stored["token_hash"]
+    assert consume_email_verification_token(conn, token) is True
+    assert consume_email_verification_token(conn, token) is False
+
+    created = create_customer_session(conn, account_id)
+    session = authenticate_customer_session(conn, created["session_token"])
+    assert session is not None
+    assert session["account_id"] == account_id
+    assert session["email"] == email.lower()
+
+
+def test_postgres_customer_wallet_and_paper_trading_lifecycle(postgres_connection):
+    conn = postgres_connection
+    email = uuid.uuid4().hex + "@trader.test"
+    account_id = register_customer_account(conn, email, "correct horse battery staple")
+    token = create_email_verification_token(conn, account_id)
+    assert consume_email_verification_token(conn, token)
+
+    wallet = "11111111111111111111111111111111"
+    add_wallet(conn, account_id, wallet, "Postgres integration wallet")
+    assert list_wallets(conn, account_id)[0]["label"] == "Postgres integration wallet"
+
+    paper = create_paper_account(conn, account_id, 500, "Postgres test account")
+    bought = place_paper_trade(
+        conn, account_id, paper["id"], asset_id="integration-mint",
+        side="buy", amount_usd=100, price_usd=2, token_name="Integration Token",
+    )
+    assert bought["cash_balance_usd"] == 400
+    assert len(list_paper_positions(conn, account_id, paper["id"])) == 1
+
+    sold = place_paper_trade(
+        conn, account_id, paper["id"], asset_id="integration-mint",
+        side="sell", amount_usd=60, price_usd=3,
+    )
+    assert sold["realized_pnl_usd"] == 20
+    assert sold["cash_balance_usd"] == 460
+    assert len(list_paper_trades(conn, account_id, paper["id"])) == 2
+
+
+def test_postgres_customer_integration_credentials_are_encrypted_and_tenant_scoped(postgres_connection):
+    conn = postgres_connection
+    suffix = uuid.uuid4().hex
+    account_a = register_customer_account(
+        conn, suffix + "@integration-a.test", "correct horse battery staple"
+    )
+    account_b = register_customer_account(
+        conn, suffix + "@integration-b.test", "correct horse battery staple"
+    )
+    for account_id in (account_a, account_b):
+        token = create_email_verification_token(conn, account_id)
+        assert consume_email_verification_token(conn, token)
+
+    key = Fernet.generate_key().decode("ascii")
+    credentials = {"api_key": "postgres-private-helius-key"}
+    status = save_customer_integration(
+        conn, account_a, "helius", credentials, encryption_key=key
+    )
+    stored = conn.execute(
+        "SELECT encrypted_payload FROM customer_integrations WHERE account_id=? AND provider='helius'",
+        (account_a,),
+    ).fetchone()
+    assert credentials["api_key"] not in stored["encrypted_payload"]
+    assert status["configured"] is True
+    assert load_customer_integration(
+        conn, account_a, "helius", encryption_key=key
+    ) == credentials
+    assert load_customer_integration(
+        conn, account_b, "helius", encryption_key=key
+    ) is None
+    assert get_customer_integration_status(
+        conn, account_b, "helius"
+    )["configured"] is False
+
+
+def test_postgres_customer_registration_and_signin_routes(monkeypatch):
+    settings = Settings(
+        db_path=":memory:",
+        read_api_keys=frozenset(),
+        admin_api_keys=frozenset(),
+        database_url=DATABASE_URL,
+    )
+    sent = {}
+
+    async def fake_send(address, token):
+        sent[address] = token
+
+    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
+    monkeypatch.setenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        email = uuid.uuid4().hex + "@routes.test"
+        registered = client.post(
+            "/v1/customer/register",
+            json={"email": email, "password": "correct horse battery staple"},
+        )
+        assert registered.status_code == 201
+        assert email in sent
+        verified = client.get(
+            "/v1/customer/verify-email", params={"token": sent[email]}
+        )
+        assert verified.status_code == 200
+        login = client.post(
+            "/v1/customer/login",
+            json={"email": email, "password": "correct horse battery staple"},
+        )
+        assert login.status_code == 200
+        assert client.get("/v1/customer/me").json()["email"] == email
