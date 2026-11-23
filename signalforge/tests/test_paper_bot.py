@@ -42,7 +42,7 @@ def test_paper_bot_starts_paused_and_requires_timed_manual_start():
     run_migrations(conn)
     status = bot_status(conn)
     assert status["enabled"] is False
-    assert status["status"] == "PAUSED"
+    assert status["status"] == "STOPPED"
     try:
         configure_bot(conn, enabled=True)
         assert False, "Starting without a selected duration must fail"
@@ -54,6 +54,8 @@ def test_paper_bot_starts_paused_and_requires_timed_manual_start():
     assert status["remaining_seconds"] > 0
     status = configure_bot(conn, enabled=False)
     assert status["enabled"] is False
+    assert status["status"] == "STOPPED"
+    assert status["run_stopped_at"] is not None
 
 
 from datetime import datetime, timezone
