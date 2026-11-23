@@ -1,6 +1,7 @@
 """Persistent paper simulator. No wallet, signing, or live-order functionality."""
 import json
 import math
+from datetime import datetime, timezone
 from .db import utcnow
 
 STARTING_BALANCE = 10000.0
@@ -125,3 +126,59 @@ def activity(conn, strategy=None, limit=100):
         except (ValueError,TypeError): item["details"]={}
         out.append(item)
     return out
+
+
+
+def session_overview(conn, session_started_at, session_stopped_at=None, active=False):
+    """Return only executions and positions belonging to the latest timed session."""
+    ensure_accounts(conn)
+    account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
+    if not session_started_at:
+        return {
+            "session_started_at": None, "active": bool(active), "runtime_seconds": 0,
+            "invested_usd": 0.0, "realized_pnl_usd": 0.0, "unrealized_pnl_usd": 0.0,
+            "open_positions": [], "trades": [], "trade_count": 0, "buy_count": 0, "sell_count": 0,
+        }
+    try:
+        started = datetime.fromisoformat(session_started_at.replace("Z", "+00:00"))
+        ended = (datetime.fromisoformat(session_stopped_at.replace("Z", "+00:00"))
+                 if session_stopped_at else datetime.now(timezone.utc))
+        runtime_seconds = max(0, int((ended - started).total_seconds()))
+    except (TypeError, ValueError):
+        runtime_seconds = 0
+
+    trades = [dict(row) for row in conn.execute(
+        """SELECT id, asset_id, token_name, side, quantity, reference_price, fill_price,
+                  gross_usd, fee_usd, realized_pnl_usd, reason, created_at
+           FROM paper_trades
+           WHERE account_id=? AND created_at>=?
+           ORDER BY created_at DESC, id DESC LIMIT 200""",
+        (account["id"], session_started_at),
+    ).fetchall()]
+    invested = sum(float(t["gross_usd"] or 0) + float(t["fee_usd"] or 0)
+                   for t in trades if t["side"] == "buy")
+    realized = sum(float(t["realized_pnl_usd"] or 0)
+                   for t in trades if t["side"] == "sell")
+    positions = [dict(row) for row in conn.execute(
+        """SELECT asset_id, token_name, quantity, avg_entry_price, last_price,
+                  cost_basis, opened_at, updated_at
+           FROM paper_positions
+           WHERE account_id=? AND opened_at>=?
+           ORDER BY opened_at DESC""",
+        (account["id"], session_started_at),
+    ).fetchall()]
+    unrealized = sum((float(p["last_price"]) - float(p["avg_entry_price"])) * float(p["quantity"])
+                     for p in positions)
+    return {
+        "session_started_at": session_started_at,
+        "active": bool(active),
+        "runtime_seconds": runtime_seconds,
+        "invested_usd": round(invested, 2),
+        "realized_pnl_usd": round(realized, 2),
+        "unrealized_pnl_usd": round(unrealized, 2),
+        "open_positions": positions,
+        "trades": trades,
+        "trade_count": len(trades),
+        "buy_count": sum(1 for t in trades if t["side"] == "buy"),
+        "sell_count": sum(1 for t in trades if t["side"] == "sell"),
+    }
