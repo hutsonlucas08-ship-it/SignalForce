@@ -1,6 +1,6 @@
 """Settings loaded from environment variables. No secrets live in code."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 MIN_KEY_LENGTH = 24
 VERSION = "0.1.0"
@@ -18,7 +18,7 @@ class Settings:
     rate_limit_per_minute: int = 300
     stale_after_seconds: int = 300
     version: str = VERSION
-    database_url: str | None = None
+    database_url: str | None = field(default=None, repr=False)
 
 
 def _keys(name: str) -> frozenset:
