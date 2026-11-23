@@ -501,9 +501,21 @@ def configure_bot(conn, enabled=None, allocated_capital_usd=None, duration_secon
             allowed_durations = {900, 1800, 3600, 7200, 14400}
             if duration_seconds not in allowed_durations:
                 raise ValueError("Choose a run duration of 15 minutes, 30 minutes, 1 hour, 2 hours, or 4 hours")
+            # Each timed run starts with a clean automatic paper portfolio.
+            # Historical paper_trades remain untouched and are still auditable.
+            account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
+            old_assets = [row["asset_id"] for row in conn.execute(
+                "SELECT asset_id FROM paper_positions WHERE account_id=?", (account["id"],)
+            ).fetchall()]
+            if old_assets:
+                placeholders = ",".join("?" for _ in old_assets)
+                conn.execute("DELETE FROM position_tracking WHERE asset_id IN (" + placeholders + ")", tuple(old_assets))
+            conn.execute("DELETE FROM paper_positions WHERE account_id=?", (account["id"],))
+            conn.execute("UPDATE paper_accounts SET cash_balance=starting_balance,updated_at=? WHERE id=?",
+                         (utcnow(), account["id"]))
             started = datetime.now(timezone.utc)
             ends = started + timedelta(seconds=duration_seconds)
-            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,run_stopped_at=NULL,run_session_id=?,session_seconds=?,last_error=NULL WHERE id=1",
+            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,run_stopped_at=NULL,run_session_id=?,session_seconds=?,last_error=NULL,last_scan_summary=NULL WHERE id=1",
                          (started.strftime("%Y-%m-%dT%H:%M:%SZ"),ends.strftime("%Y-%m-%dT%H:%M:%SZ"),uuid.uuid4().hex,duration_seconds))
         else:
             conn.execute("UPDATE paper_bot_state SET enabled=0,run_until=NULL,run_stopped_at=? WHERE id=1",(utcnow(),))
