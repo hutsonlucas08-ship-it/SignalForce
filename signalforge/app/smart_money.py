@@ -62,7 +62,11 @@ def summarize_token(
         entry_time = str(first_buy.get("occurred_at") or "")
         current_x = calculate_multiple(entry_price, current_price)
         peak_prices = [price for timestamp, price in price_rows if timestamp >= entry_time]
-        peak_x = max((calculate_multiple(entry_price, price) for price in peak_prices), default=None)
+        observed_peak_multiples = [
+            value for value in (calculate_multiple(entry_price, price) for price in peak_prices)
+            if value is not None
+        ]
+        peak_x = max(observed_peak_multiples) if observed_peak_multiples else None
         if current_x is not None:
             current_multiples.append(current_x)
         if peak_x is not None:
