@@ -52,3 +52,41 @@ def test_render_requires_postgres_url_instead_of_ephemeral_sqlite(monkeypatch):
 
     with pytest.raises(ConfigError, match="DATABASE_URL is required on Render"):
         load_settings()
+
+
+
+def test_render_requires_valid_customer_credential_encryption_key(monkeypatch):
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@localhost/database")
+    monkeypatch.delenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("SIGNALFORGE_READ_KEYS", "")
+    monkeypatch.setenv("SIGNALFORGE_ADMIN_KEYS", "")
+    with pytest.raises(ConfigError, match="SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY is required"):
+        load_settings()
+
+    monkeypatch.setenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", "not-a-valid-fernet-key")
+    with pytest.raises(ConfigError, match="must be a valid Fernet key"):
+        load_settings()
+
+    monkeypatch.setenv(
+        "SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode()
+    )
+    settings = load_settings()
+    assert settings.database_url == "postgresql://user:password@localhost/database"
+
+
+def test_render_rejects_insecure_customer_session_cookie(monkeypatch):
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@localhost/database")
+    monkeypatch.setenv(
+        "SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode()
+    )
+    monkeypatch.setenv("SIGNALFORGE_COOKIE_SECURE", "false")
+    monkeypatch.setenv("SIGNALFORGE_READ_KEYS", "")
+    monkeypatch.setenv("SIGNALFORGE_ADMIN_KEYS", "")
+    with pytest.raises(ConfigError, match="SIGNALFORGE_COOKIE_SECURE must remain true"):
+        load_settings()
