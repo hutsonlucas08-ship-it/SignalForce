@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,8 @@ from . import store
 from .auth import Principal, RateLimiter, _fp, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
+from . import customer_auth, customer_data, customer_integrations
+from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
 from . import paper, paper_bot, telegram_alerts
@@ -59,6 +61,39 @@ class WalletWatchRequest(BaseModel):
 
 class BulkWalletWatchRequest(BaseModel):
     wallet_addresses: list[str] = Field(min_length=1, max_length=1000)
+
+
+class CustomerRegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=12, max_length=1024)
+
+
+class CustomerLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class CustomerActivateRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class CustomerWalletRequest(BaseModel):
+    wallet_address: str = Field(min_length=32, max_length=44)
+    label: Optional[str] = Field(default=None, max_length=80)
+
+
+class CustomerPaperAccountRequest(BaseModel):
+    starting_capital_usd: float = Field(ge=5, le=100000000)
+    name: str = Field(default="Main Paper Account", min_length=1, max_length=80)
+
+
+class CustomerIntegrationRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=20)
+    credentials: dict[str, str]
+
+
+class CustomerProviderRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=20)
 
 
 class RiskScreenRequest(BaseModel):
@@ -127,6 +162,171 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             yield conn
         finally:
             conn.close()
+
+    # Customer accounts use opaque HttpOnly cookies. These endpoints deliberately
+    # expose only tenant-scoped data; the legacy operator dashboard remains API-key gated.
+    app.state.customer_auth_limiter = RateLimiter(12)
+
+    def require_customer(request: Request, conn=Depends(get_conn)):
+        token = request.cookies.get("sf_customer_session")
+        session = customer_auth.authenticate_customer_session(conn, token or "")
+        if session is None:
+            raise HTTPException(status_code=401, detail="Customer sign-in required")
+        return session
+
+    def require_customer_write(request: Request, session=Depends(require_customer)):
+        if not customer_auth.verify_csrf_token(session, request.headers.get("x-csrf-token", "")):
+            raise HTTPException(status_code=403, detail="CSRF validation failed")
+        return session
+
+    def customer_rate_limit(request: Request, action: str):
+        host = request.client.host if request.client else "unknown"
+        app.state.customer_auth_limiter.check(action + ":" + host)
+
+    @app.post("/v1/customer/register", status_code=202)
+    def customer_register(body: CustomerRegisterRequest, request: Request, conn=Depends(get_conn)):
+        customer_rate_limit(request, "register")
+        try:
+            customer_auth.register_customer_account(conn, body.email, body.password)
+        except customer_auth.CustomerAuthError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return {"status": "pending_activation", "message": "Your account request was received. Sign-in becomes available after account activation."}
+
+    @app.post("/v1/customer/login")
+    def customer_login(body: CustomerLoginRequest, request: Request, response: Response, conn=Depends(get_conn)):
+        customer_rate_limit(request, "login")
+        email = body.email.strip().lower()
+        row = conn.execute("SELECT id,password_hash,status FROM customer_accounts WHERE email=?", (email,)).fetchone()
+        if row is None or not customer_auth.verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Email or password is incorrect")
+        if row["status"] != "active":
+            raise HTTPException(status_code=403, detail="This account is awaiting activation or is unavailable")
+        session = customer_auth.create_customer_session(conn, row["id"])
+        secure_cookie = os.getenv("SIGNALFORCE_COOKIE_SECURE", "true").lower() != "false"
+        response.set_cookie("sf_customer_session", session["session_token"], httponly=True,
+                            secure=secure_cookie, samesite="strict", max_age=86400, path="/")
+        return {"authenticated": True, "email": email, "csrf_token": session["csrf_token"],
+                "expires_at": session["expires_at"]}
+
+    @app.get("/v1/customer/me")
+    def customer_me(session=Depends(require_customer)):
+        return {"authenticated": True, "email": session["email"], "expires_at": session["expires_at"]}
+
+    @app.post("/v1/customer/logout")
+    def customer_logout(request: Request, response: Response, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        customer_auth.revoke_customer_session(conn, request.cookies.get("sf_customer_session", ""))
+        response.delete_cookie("sf_customer_session", path="/", httponly=True, samesite="strict")
+        return {"authenticated": False}
+
+    @app.post("/v1/admin/customers/activate")
+    def activate_customer(body: CustomerActivateRequest, _: Principal = Depends(require_admin), conn=Depends(get_conn)):
+        cursor = conn.execute("UPDATE customer_accounts SET status='active', email_verified_at=?, updated_at=? WHERE email=? COLLATE NOCASE AND status='pending'",
+                              (utcnow(), utcnow(), body.email.strip()))
+        conn.commit()
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=404, detail="Pending customer account not found")
+        return {"activated": True, "email": body.email.strip().lower()}
+
+    @app.get("/v1/customer/wallets")
+    def customer_wallets(session=Depends(require_customer), conn=Depends(get_conn)):
+        return {"wallets": customer_data.list_wallets(conn, session["account_id"])}
+
+    @app.post("/v1/customer/wallets")
+    def customer_add_wallet(body: CustomerWalletRequest, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            wallet = customer_data.add_wallet(conn, session["account_id"], body.wallet_address, body.label)
+            return {"wallet": wallet}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.delete("/v1/customer/wallets/{wallet_address}")
+    def customer_remove_wallet(wallet_address: str, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        if not customer_data.remove_wallet(conn, session["account_id"], wallet_address):
+            raise HTTPException(status_code=404, detail="Wallet not found on this account")
+        return {"removed": True}
+
+    @app.get("/v1/customer/paper-accounts")
+    def customer_paper_accounts(session=Depends(require_customer), conn=Depends(get_conn)):
+        return {"paper_accounts": customer_data.list_paper_accounts(conn, session["account_id"])}
+
+    @app.post("/v1/customer/paper-accounts", status_code=201)
+    def customer_create_paper_account(body: CustomerPaperAccountRequest, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            return {"paper_account": customer_data.create_paper_account(
+                conn, session["account_id"], body.starting_capital_usd, body.name)}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.get("/v1/customer/integrations")
+    def customer_integrations_status(session=Depends(require_customer), conn=Depends(get_conn)):
+        return {"integrations": [customer_integrations.get_customer_integration_status(
+            conn, session["account_id"], provider) for provider in sorted(customer_integrations.SUPPORTED_PROVIDERS)]}
+
+    @app.post("/v1/customer/integrations")
+    def customer_save_integration(body: CustomerIntegrationRequest, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            status = customer_integrations.save_customer_integration(
+                conn, session["account_id"], body.provider, body.credentials)
+            return {"integration": status}
+        except customer_integrations.CustomerIntegrationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except CredentialEncryptionError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.post("/v1/customer/integrations/test")
+    async def customer_test_integration(body: CustomerProviderRequest, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            credentials = customer_integrations.load_customer_integration(conn, session["account_id"], body.provider)
+            if not credentials:
+                raise HTTPException(status_code=404, detail="Integration is not configured")
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                if body.provider == "helius":
+                    api_key = credentials.get("api_key", "")
+                    response = await client.get("https://api.helius.xyz/v0/addresses/11111111111111111111111111111111/transactions",
+                                                params={"api-key": api_key, "limit": 1})
+                    if response.status_code in (401, 403):
+                        raise customer_integrations.CustomerIntegrationError("invalid_credentials")
+                    response.raise_for_status()
+                elif body.provider == "telegram":
+                    token, chat_id = credentials.get("bot_token", ""), credentials.get("chat_id", "")
+                    if not token or not chat_id:
+                        raise customer_integrations.CustomerIntegrationError("validation_failed")
+                    response = await client.get("https://api.telegram.org/bot" + token + "/getMe")
+                    payload = response.json()
+                    if not response.is_success or not payload.get("ok"):
+                        raise customer_integrations.CustomerIntegrationError("invalid_credentials")
+                    sent = await client.post("https://api.telegram.org/bot" + token + "/sendMessage",
+                                             json={"chat_id": chat_id, "text": "SignalForce connection test successful."})
+                    if not sent.is_success or not sent.json().get("ok"):
+                        raise customer_integrations.CustomerIntegrationError("validation_failed")
+                else:
+                    raise customer_integrations.CustomerIntegrationError("Unsupported integration provider.")
+            status = customer_integrations.set_customer_integration_status(conn, session["account_id"], body.provider, "connected")
+            return {"integration": status, "test": "passed"}
+        except customer_integrations.CustomerIntegrationError as exc:
+            code = str(exc) if str(exc) in customer_integrations.SAFE_ERROR_CODES else "validation_failed"
+            try:
+                customer_integrations.set_customer_integration_status(conn, session["account_id"], body.provider, "error", error_code=code)
+            except customer_integrations.CustomerIntegrationError:
+                pass
+            raise HTTPException(status_code=422, detail="Integration test failed: " + code)
+        except httpx.HTTPError:
+            try:
+                customer_integrations.set_customer_integration_status(conn, session["account_id"], body.provider, "error", error_code="provider_unavailable")
+            except customer_integrations.CustomerIntegrationError:
+                pass
+            raise HTTPException(status_code=502, detail="The provider could not be reached")
+        except CredentialEncryptionError:
+            raise HTTPException(status_code=503, detail="Customer credential encryption is unavailable")
+
+    @app.delete("/v1/customer/integrations/{provider}")
+    def customer_disconnect_integration(provider: str, session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            return {"disconnected": customer_integrations.disconnect_customer_integration(conn, session["account_id"], provider)}
+        except customer_integrations.CustomerIntegrationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     @app.get("/", include_in_schema=False)
     def dashboard():
