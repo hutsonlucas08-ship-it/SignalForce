@@ -71,7 +71,7 @@ def _set_status(conn, **values):
 
 def _claim(conn):
     now = time.time()
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT lock_owner,lock_until_epoch FROM paper_bot_state WHERE id=1").fetchone()
     if row and row["lock_owner"] not in (None, OWNER) and row["lock_until_epoch"] > now:
         conn.rollback()
