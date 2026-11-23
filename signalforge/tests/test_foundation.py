@@ -482,3 +482,21 @@ def test_bulk_add_wallets_caps_request_at_one_thousand_addresses():
     response = c.post("/v1/copytraders/wallets/bulk", headers=h(READ),
                       json={"wallet_addresses": ["11111111111111111111111111111111"] * 1001})
     assert response.status_code == 422
+
+
+
+def test_paper_session_endpoint_reports_only_latest_session():
+    client, _ = make_client()
+    started = client.post(
+        "/v1/paper/bot/config",
+        headers=h(READ),
+        json={"enabled": True, "duration_seconds": 900},
+    )
+    assert started.status_code == 200
+    response = client.get("/v1/paper/session", headers=h(READ))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active"] is True
+    assert body["trade_count"] == 0
+    assert body["open_positions"] == []
+    assert body["session_started_at"]
