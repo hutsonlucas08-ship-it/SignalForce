@@ -900,6 +900,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             state.get("run_started_at"),
             state.get("run_stopped_at"),
             bool(state.get("enabled")),
+            state.get("run_session_id"),
         )
 
     @app.post("/v1/paper/orders")
