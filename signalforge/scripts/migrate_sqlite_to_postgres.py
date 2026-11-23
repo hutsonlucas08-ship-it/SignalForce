@@ -112,6 +112,33 @@ def assert_target_empty(conn):
         )
 
 
+def clear_migration_seed_rows(conn):
+    """Remove only the two known singleton rows inserted by schema migrations."""
+    seed_tables = {"control_flags", "paper_bot_state"}
+    for name in target_tables(conn):
+        count = conn.execute(
+            sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(name))
+        ).fetchone()[0]
+        if not count:
+            continue
+        if name not in seed_tables or count != 1:
+            raise RuntimeError(
+                f"Destination table {name} contains unexpected rows after schema creation."
+            )
+        seed_id = conn.execute(
+            sql.SQL("SELECT id FROM {}").format(sql.Identifier(name))
+        ).fetchone()[0]
+        if seed_id != 1:
+            raise RuntimeError(
+                f"Destination table {name} contains an unexpected bootstrap row."
+            )
+        conn.execute(
+            sql.SQL("DELETE FROM {}").format(sql.Identifier(name))
+        )
+    conn.commit()
+    assert_target_empty(conn)
+
+
 def backup_source(source_path: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = source_path.with_name(source_path.name + f".pre-postgres-{stamp}.bak")
@@ -266,7 +293,9 @@ def main() -> int:
             # Apply the checked-in schema to the empty destination before copying.
             from app.db import PostgresConnection, run_migrations
             migrated = run_migrations(PostgresConnection(target))
-            assert_target_empty(target)
+            # The checked-in migrations seed two singleton control rows. Replace
+            # those known defaults with the source values; reject every other row.
+            clear_migration_seed_rows(target)
 
             backup_path = backup_source(args.sqlite_path)
             copied = copy_data(source, target, names, foreign_keys)
