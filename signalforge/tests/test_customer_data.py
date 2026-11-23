@@ -55,3 +55,42 @@ def test_paper_accounts_are_private_and_capital_is_validated():
     assert get_paper_account(conn, "b", paper["id"]) is None
     with pytest.raises(CustomerDataError):
         create_paper_account(conn, "a", 4)
+
+
+def test_customer_paper_buy_sell_updates_cash_positions_and_realized_pnl():
+    from app.customer_data import list_paper_positions, list_paper_trades, place_paper_trade
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_account(conn, "a", "a@example.test")
+    paper = create_paper_account(conn, "a", 500)
+    bought = place_paper_trade(
+        conn, "a", paper["id"], asset_id="mint-a", side="buy",
+        amount_usd=100, price_usd=2, token_name="Token A",
+    )
+    assert bought["quantity"] == 50
+    assert bought["cash_balance_usd"] == 400
+    assert len(list_paper_positions(conn, "a", paper["id"])) == 1
+    sold = place_paper_trade(
+        conn, "a", paper["id"], asset_id="mint-a", side="sell",
+        amount_usd=60, price_usd=3,
+    )
+    assert sold["quantity"] == 20
+    assert sold["realized_pnl_usd"] == 20
+    assert sold["cash_balance_usd"] == 460
+    assert list_paper_positions(conn, "a", paper["id"])[0]["quantity"] == 30
+    assert len(list_paper_trades(conn, "a", paper["id"])) == 2
+
+
+def test_customer_paper_trades_reject_overspending_and_cross_tenant_access():
+    from app.customer_data import place_paper_trade
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_account(conn, "a", "a@example.test")
+    _active_account(conn, "b", "b@example.test")
+    paper = create_paper_account(conn, "a", 50)
+    with pytest.raises(CustomerDataError):
+        place_paper_trade(conn, "a", paper["id"], asset_id="mint-a", side="buy",
+                          amount_usd=51, price_usd=1)
+    with pytest.raises(CustomerDataError):
+        place_paper_trade(conn, "b", paper["id"], asset_id="mint-a", side="buy",
+                          amount_usd=10, price_usd=1)
