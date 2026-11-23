@@ -71,6 +71,14 @@ def test_registration_creates_pending_account_and_normalizes_email():
     assert row["email"] == "person@example.test"
     assert row["status"] == "pending"
     assert verify_password("correct horse battery staple", row["password_hash"])
+    with pytest.raises(CustomerAuthError):
+        create_customer_session(conn, account_id)
+    from app.customer_auth import create_email_verification_token, consume_email_verification_token
+    token = create_email_verification_token(conn, account_id)
+    stored_hash = conn.execute("SELECT token_hash FROM customer_email_verification_tokens").fetchone()["token_hash"]
+    assert token not in stored_hash
+    assert consume_email_verification_token(conn, token)
+    assert not consume_email_verification_token(conn, token)
     session = create_customer_session(conn, account_id)
     assert session["session_token"]
 
