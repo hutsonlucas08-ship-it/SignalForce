@@ -109,3 +109,28 @@ def revoke_customer_session(conn: sqlite3.Connection, session_token: str) -> boo
     )
     conn.commit()
     return cursor.rowcount == 1
+
+
+def register_customer_account(conn: sqlite3.Connection, email: str, password: str) -> str:
+    """Create a pending account; it cannot sign in until verified/activated."""
+    import re
+    import uuid
+
+    if not isinstance(email, str) or len(email) > 254:
+        raise ValueError("Enter a valid email address.")
+    normalized = email.strip().lower()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", normalized):
+        raise ValueError("Enter a valid email address.")
+    password_hash = hash_password(password)
+    account_id = uuid.uuid4().hex
+    now = utcnow()
+    try:
+        conn.execute(
+            "INSERT INTO customer_accounts(id,email,password_hash,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)",
+            (account_id, normalized, password_hash, now, now),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        raise CustomerAuthError("An account with that email already exists.") from exc
+    return account_id
