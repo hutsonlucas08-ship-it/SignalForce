@@ -136,6 +136,7 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "013_customer_identity_foundation.sql",
         "014_customer_owned_trading_data.sql",
         "015_activate_existing_beta_accounts.sql",
+        "016_customer_email_verification.sql",
     ]
     assert run_migrations(conn) == []
     state = conn.execute("SELECT enabled FROM paper_bot_state WHERE id=1").fetchone()
@@ -312,9 +313,13 @@ def test_geckoterminal_new_launches_returns_token_artwork(monkeypatch):
     assert body["launches"][0]["liquidity_usd"] == "25000"
 
 
-def test_geckoterminal_new_launches_requires_read_auth():
+def test_geckoterminal_new_launches_is_public_for_customer_homepage():
     c, _ = make_client()
-    assert c.get("/v1/research/new-launches").status_code == 401
+    from app import main
+    main._launch_cache["solana"] = (9999999999, {"launches": [], "count": 0, "source": "cached"})
+    response = c.get("/v1/research/new-launches")
+    assert response.status_code == 200
+    assert response.json()["launches"] == []
 
 
 def test_trending_now_discovers_market_wide_gecko_tokens(monkeypatch):
