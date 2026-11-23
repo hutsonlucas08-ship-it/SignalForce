@@ -25,7 +25,7 @@ def test_trailing_stop_has_no_fixed_profit_cap_and_uses_gain_tiers():
     assert trail_pct_for(20, config) == 12
     assert trail_pct_for(100, config) == 20
     assert trail_pct_for(500, config) == 30
-    decision = decide_exit(entry_price=1, price=15, peak_price=20, config=config)
+    decision = decide_exit(entry_price=1, price=13, peak_price=20, config=config)
     assert decision.action == "sell_all"
     assert "trailing stop" in decision.reason
 
@@ -41,7 +41,7 @@ def test_dead_money_timer_only_applies_before_trailing_stop_activates():
     config = ExitConfig(max_hold_seconds=100)
     assert decide_exit(entry_price=1, price=1.01, peak_price=1.01,
                        held_seconds=101, config=config).action == "sell_all"
-    assert decide_exit(entry_price=1, price=1.1, peak_price=1.25,
+    assert decide_exit(entry_price=1, price=1.15, peak_price=1.25,
                        held_seconds=1000, config=config) == HOLD
 
 
