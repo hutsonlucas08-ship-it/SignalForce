@@ -40,3 +40,20 @@ def test_session_overview_is_empty_before_first_session():
     assert result["invested_usd"] == 0
     assert result["open_positions"] == []
     conn.close()
+
+
+
+def test_aggressive_automatic_paper_order_can_use_ten_percent_sizing():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    try:
+        paper.place_order(conn, "automatic", "large-default", "Default Limit", "buy", 800, 1, "default risk")
+        assert False, "Default paper order must retain 5% limit"
+    except ValueError as exc:
+        assert "position limit" in str(exc)
+    result = paper.place_order(
+        conn, "automatic", "large-aggressive", "Aggressive Limit", "buy", 800, 1,
+        "aggressive paper risk", max_position_fraction=0.10, max_open_positions=20,
+    )
+    assert result["gross_usd"] > 700
+    conn.close()
