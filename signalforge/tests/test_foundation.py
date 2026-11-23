@@ -386,7 +386,7 @@ def test_dashboard_is_served_at_root():
     c, _ = make_client()
     response = c.get("/")
     assert response.status_code == 200
-    assert "SignalForge" in response.text
+    assert "SignalForce" in response.text
     assert "New Launches" in response.text
     assert "Latest 10 Discovered Tokens" not in response.text
 
