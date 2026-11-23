@@ -34,6 +34,9 @@ class HybridRow(dict):
 
 
 def _hybrid_row_factory(cursor):
+    # Psycopg invokes the row factory for command-only statements too.
+    if cursor.description is None:
+        return lambda values: values
     columns = [column.name for column in cursor.description]
 
     def make_row(values):
