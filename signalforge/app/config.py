@@ -15,7 +15,7 @@ class Settings:
     db_path: str
     read_api_keys: frozenset
     admin_api_keys: frozenset
-    rate_limit_per_minute: int = 60
+    rate_limit_per_minute: int = 300
     stale_after_seconds: int = 300
     version: str = VERSION
 
@@ -40,6 +40,6 @@ def load_settings() -> Settings:
         db_path=os.getenv("SIGNALFORGE_DB_PATH", "./data/signalforge.db"),
         read_api_keys=read_keys,
         admin_api_keys=admin_keys,
-        rate_limit_per_minute=int(os.getenv("SIGNALFORGE_RATE_LIMIT_PER_MINUTE", "60")),
+        rate_limit_per_minute=int(os.getenv("SIGNALFORGE_RATE_LIMIT_PER_MINUTE", "300")),
         stale_after_seconds=int(os.getenv("SIGNALFORGE_STALE_AFTER_SECONDS", "300")),
     )
