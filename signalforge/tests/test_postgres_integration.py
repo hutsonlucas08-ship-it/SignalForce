@@ -4,6 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import sqlite3
 import uuid
+from pathlib import Path
+
+import psycopg
+from psycopg import sql
 
 import pytest
 
@@ -22,6 +26,9 @@ from app.customer_integrations import (
 )
 from cryptography.fernet import Fernet
 from app.db import connect, run_migrations, utcnow
+from scripts.migrate_sqlite_to_postgres import (
+    clear_migration_seed_rows, copy_data, source_inventory,
+)
 from app.main import create_app
 from fastapi.testclient import TestClient
 
@@ -327,3 +334,68 @@ def test_postgres_concurrent_paper_buys_cannot_overspend_same_account(postgres_c
     ).fetchone()
     assert final["cash_balance_usd"] == 10
     assert len(list_paper_trades(conn, account_id, paper["id"])) == 1
+
+
+def test_sqlite_to_postgres_data_transfer_round_trip(tmp_path):
+    """Exercise the actual importer against a fresh PostgreSQL schema."""
+    sqlite_path = tmp_path / "legacy-signalforce.db"
+    legacy = connect(str(sqlite_path))
+    run_migrations(legacy)
+    now = utcnow()
+    legacy.execute(
+        "INSERT INTO data_sources(name,kind,last_success_at) VALUES(?,?,?)",
+        ("migration-fixture", "test", now),
+    )
+    legacy.execute(
+        "INSERT INTO observations(source,asset_id,kind,payload,observed_at,collected_at) "
+        "VALUES(?,?,?,?,?,?)",
+        ("migration-fixture", "fixture-mint", "snapshot", "{\"price\":1}", now, now),
+    )
+    original_id = legacy.execute(
+        "SELECT id FROM observations WHERE asset_id='fixture-mint'"
+    ).fetchone()[0]
+    legacy.execute(
+        "INSERT INTO customer_accounts(id,email,password_hash,status,email_verified_at,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("migration-customer", "migration@example.test", "test-hash", "active", now, now, now),
+    )
+    legacy.commit()
+    names, foreign_keys, source_counts = source_inventory(legacy)
+
+    schema_name = "sf_migration_" + uuid.uuid4().hex
+    target = psycopg.connect(DATABASE_URL)
+    try:
+        target.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name))
+        )
+        target.execute(
+            sql.SQL("SET search_path TO {}").format(sql.Identifier(schema_name))
+        )
+        target.commit()
+
+        run_migrations(PostgresConnection(target))
+        clear_migration_seed_rows(target)
+        copied = copy_data(legacy, target, names, foreign_keys)
+
+        assert copied == source_counts
+        assert target.execute(
+            "SELECT email FROM customer_accounts WHERE id='migration-customer'"
+        ).fetchone()[0] == "migration@example.test"
+        assert target.execute(
+            "SELECT COUNT(*) FROM observations WHERE asset_id='fixture-mint'"
+        ).fetchone()[0] == 1
+
+        next_row = target.execute(
+            "INSERT INTO observations(source,asset_id,kind,payload,observed_at,collected_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("migration-fixture", "after-import", "snapshot", "{}", now, now),
+        ).fetchone()
+        assert next_row[0] > original_id
+    finally:
+        legacy.close()
+        target.rollback()
+        target.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema_name))
+        )
+        target.commit()
+        target.close()
