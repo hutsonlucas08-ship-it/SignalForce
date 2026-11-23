@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: signalforce
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    disk:
+      name: signalforce-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: SIGNALFORGE_DB_PATH
+        value: /var/data/signalforce.db
+      - key: SIGNALFORGE_COOKIE_SECURE
+        value: "true"
+      - key: SIGNALFORGE_READ_KEYS
+        sync: false
+      - key: SIGNALFORGE_ADMIN_KEYS
+        sync: false
+      - key: SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
