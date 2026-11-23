@@ -71,8 +71,8 @@ def test_registration_creates_active_beta_account_and_normalizes_email():
     assert row["email"] == "person@example.test"
     assert row["status"] == "active"
     assert verify_password("correct horse battery staple", row["password_hash"])
-    with pytest.raises(CustomerAuthError):
-        create_customer_session(conn, account_id)
+    session = create_customer_session(conn, account_id)
+    assert session["session_token"]
 
 
 def test_registration_rejects_invalid_email_and_duplicate_email():
