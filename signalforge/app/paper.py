@@ -48,7 +48,7 @@ def _activity(conn, account_id, kind, message, details):
         (account_id,kind,message,json.dumps(details,separators=(",",":")),utcnow()))
 
 
-def place_order(conn, strategy, asset_id, token_name, side, amount_usd, reference_price, reason, session_id=None):
+def place_order(conn, strategy, asset_id, token_name, side, amount_usd, reference_price, reason, session_id=None, max_position_fraction=None, max_open_positions=None):
     if strategy not in ("automatic","approval") or side not in ("buy","sell"):
         raise ValueError("Invalid strategy or side")
     if not isinstance(asset_id,str) or not asset_id.strip() or len(asset_id)>128:
@@ -60,18 +60,22 @@ def place_order(conn, strategy, asset_id, token_name, side, amount_usd, referenc
     if not account["enabled"]:
         raise ValueError("Paper strategy is paused")
     aid=account["id"]; now=utcnow()
+    position_fraction = MAX_POSITION_FRACTION if max_position_fraction is None else float(max_position_fraction)
+    position_limit = MAX_OPEN_POSITIONS if max_open_positions is None else int(max_open_positions)
+    if not 0 < position_fraction <= 0.25 or not 1 <= position_limit <= 50:
+        raise ValueError("Invalid paper position risk limits")
     pos=conn.execute("SELECT * FROM paper_positions WHERE account_id=? AND asset_id=?",(aid,asset_id)).fetchone()
     fill=reference_price*(1+SLIPPAGE_BPS/10000 if side=="buy" else 1-SLIPPAGE_BPS/10000)
     fee=amount_usd*FEE_RATE
     if side=="buy":
         equity=account["cash_balance"]+conn.execute("SELECT COALESCE(SUM(last_price*quantity),0) v FROM paper_positions WHERE account_id=?",(aid,)).fetchone()["v"]
         if amount_usd>account["cash_balance"]: raise ValueError("Insufficient virtual cash")
-        if amount_usd>equity*MAX_POSITION_FRACTION: raise ValueError("Order exceeds the 5% of equity position limit")
+        if amount_usd>equity*position_fraction: raise ValueError("Order exceeds the configured paper position limit")
         today=now[:10]
         daily=conn.execute("SELECT COALESCE(SUM(realized_pnl_usd),0) v FROM paper_trades WHERE account_id=? AND side='sell' AND substr(created_at,1,10)=?",(aid,today)).fetchone()["v"]
         if daily <= -account["starting_balance"]*0.05: raise ValueError("Daily realized-loss limit reached; new paper entries are paused")
         count=conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?",(aid,)).fetchone()["n"]
-        if pos is None and count>=MAX_OPEN_POSITIONS: raise ValueError("Maximum of 10 open positions reached")
+        if pos is None and count>=position_limit: raise ValueError("Maximum configured open positions reached")
         qty=(amount_usd-fee)/fill
         if pos:
             newqty=pos["quantity"]+qty; cost=pos["cost_basis"]+amount_usd
