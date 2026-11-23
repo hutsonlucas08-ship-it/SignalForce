@@ -18,7 +18,7 @@ from . import store
 from .auth import Principal, RateLimiter, _fp, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
-from . import customer_auth, customer_data, customer_integrations
+from . import customer_auth, customer_data, customer_integrations, customer_email
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
@@ -193,17 +193,40 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         app.state.customer_auth_limiter.check(action + ":" + host)
 
     @app.post("/v1/customer/register", status_code=201)
-    def customer_register(body: CustomerRegisterRequest, request: Request, conn=Depends(get_conn)):
-        """Create a beta customer account. Email verification is not enabled yet."""
+    async def customer_register(body: CustomerRegisterRequest, request: Request, conn=Depends(get_conn)):
+        """Create a pending account and email a one-time verification link."""
         customer_rate_limit(request, "register")
         try:
             account_id = customer_auth.register_customer_account(conn, body.email, body.password)
+            token = customer_auth.create_email_verification_token(conn, account_id)
+            await customer_email.send_verification_email(body.email.strip().lower(), token)
         except customer_auth.CustomerAuthError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        return {"status": "active", "account_id": account_id,
-                "message": "Account created. Sign in with this email and password."}
+        except customer_email.EmailDeliveryError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        return {"status": "pending_verification", "message": "Account created. Check your inbox and verify your email before signing in."}
+
+    @app.post("/v1/customer/verification/resend")
+    async def customer_resend_verification(body: CustomerActivateRequest, request: Request, conn=Depends(get_conn)):
+        customer_rate_limit(request, "verification")
+        email = body.email.strip().lower()
+        row = conn.execute("SELECT id,status FROM customer_accounts WHERE email=? COLLATE NOCASE", (email,)).fetchone()
+        # Generic response prevents account enumeration.
+        if row is not None and row["status"] == "pending":
+            token = customer_auth.create_email_verification_token(conn, row["id"])
+            try:
+                await customer_email.send_verification_email(email, token)
+            except customer_email.EmailDeliveryError as exc:
+                raise HTTPException(status_code=503, detail=str(exc))
+        return {"message": "If the account is awaiting verification, a new link has been sent."}
+
+    @app.get("/v1/customer/verify-email")
+    def customer_verify_email(token: str, conn=Depends(get_conn)):
+        if not customer_auth.consume_email_verification_token(conn, token):
+            raise HTTPException(status_code=400, detail="This verification link is invalid, expired, or already used. Request a new link.")
+        return {"verified": True, "message": "Email verified. You can now sign in to SignalForce."}
 
     @app.post("/v1/customer/login")
     def customer_login(body: CustomerLoginRequest, request: Request, response: Response, conn=Depends(get_conn)):
@@ -212,8 +235,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         row = conn.execute("SELECT id,password_hash,status FROM customer_accounts WHERE email=?", (email,)).fetchone()
         if row is None or not customer_auth.verify_password(body.password, row["password_hash"]):
             raise HTTPException(status_code=401, detail="Email or password is incorrect")
+        if row["status"] == "pending":
+            raise HTTPException(status_code=403, detail="Verify your email using the link we sent before signing in.")
         if row["status"] != "active":
-            raise HTTPException(status_code=403, detail="This account is awaiting activation or is unavailable")
+            raise HTTPException(status_code=403, detail="This account is unavailable")
         session = customer_auth.create_customer_session(conn, row["id"])
         secure_cookie = os.getenv("SIGNALFORCE_COOKIE_SECURE", "true").lower() != "false"
         response.set_cookie("sf_customer_session", session["session_token"], httponly=True,
@@ -366,6 +391,32 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=502, detail="The provider could not be reached")
         except CredentialEncryptionError:
             raise HTTPException(status_code=503, detail="Customer credential encryption is unavailable")
+
+    @app.post("/v1/customer/integrations/telegram/discover")
+    async def customer_discover_telegram_chat(session=Depends(require_customer_write), conn=Depends(get_conn)):
+        """Discover the customer's private chat after they press Start on their own bot."""
+        credentials = customer_integrations.load_customer_integration(conn, session["account_id"], "telegram")
+        if not credentials or not credentials.get("bot_token"):
+            raise HTTPException(status_code=404, detail="Save your Telegram bot token first.")
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get("https://api.telegram.org/bot" + credentials["bot_token"] + "/getUpdates")
+                payload = response.json()
+            if not response.is_success or not payload.get("ok"):
+                raise HTTPException(status_code=422, detail="Telegram could not read updates. Check your bot token and press Start in your bot.")
+            chats = []
+            for update in payload.get("result") or []:
+                message = update.get("message") or update.get("my_chat_member") or {}
+                chat = message.get("chat") or {}
+                if chat.get("id") is not None:
+                    chats.append(str(chat["id"]))
+            if not chats:
+                raise HTTPException(status_code=404, detail="No Telegram chat found yet. Open your bot, press Start, send it a message, then try again.")
+            credentials["chat_id"] = chats[-1]
+            status = customer_integrations.save_customer_integration(conn, session["account_id"], "telegram", credentials)
+            return {"chat_id": chats[-1], "integration": status}
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Telegram could not be reached. Try again shortly.")
 
     @app.delete("/v1/customer/integrations/{provider}")
     def customer_disconnect_integration(provider: str, session=Depends(require_customer_write), conn=Depends(get_conn)):
@@ -705,7 +756,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
 
     @app.get("/v1/research/new-launches")
-    async def research_new_launches(_: Principal = Depends(require_read)):
+    async def research_new_launches():
         """Return the newest Solana pools and token artwork from public GeckoTerminal data."""
         now = time.time()
         cached = _launch_cache.get("solana")
