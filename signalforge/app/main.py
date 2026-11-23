@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from . import store
 from .auth import Principal, RateLimiter, _fp, require_admin, require_read
-from .config import ConfigError, Settings, load_settings
+from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from . import customer_auth, customer_data, customer_integrations, customer_email
 from .security import CredentialEncryptionError
