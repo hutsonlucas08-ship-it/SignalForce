@@ -903,6 +903,35 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             state.get("run_session_id"),
         )
 
+    @app.get("/v1/paper/live-prices")
+    async def paper_live_prices(_: Principal = Depends(require_read), conn=Depends(get_conn)):
+        """Fetch fresh display-only quotes for currently open automatic paper positions."""
+        rows = conn.execute(
+            "SELECT asset_id FROM paper_positions WHERE account_id='paper-automatic' ORDER BY opened_at DESC LIMIT 50"
+        ).fetchall()
+        mints = [row["asset_id"] for row in rows]
+        observed_at = utcnow()
+        if not mints:
+            return {"prices": {}, "observed_at": observed_at, "source": "DexScreener", "position_count": 0}
+        async with httpx.AsyncClient(timeout=4.0, headers={"Accept": "application/json"}) as client:
+            pairs = await paper_bot._fetch_pairs(client, mints)
+        prices = {}
+        for mint, pair in pairs.items():
+            try:
+                price = float(pair.get("priceUsd"))
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                prices[mint] = price
+        return {
+            "prices": prices,
+            "observed_at": utcnow(),
+            "source": "DexScreener",
+            "position_count": len(mints),
+            "priced_count": len(prices),
+            "note": "Display-only live marks. Automated paper exit rules still run on the bot's 30-second strategy cycle.",
+        }
+
     @app.post("/v1/paper/orders")
     def paper_order(body: PaperOrderRequest, _: Principal = Depends(require_read), conn=Depends(get_conn)):
         try:
