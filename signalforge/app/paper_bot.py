@@ -365,7 +365,7 @@ def bot_status(conn):
             pass
     return {
         "enabled": bool(state["enabled"]),
-        "status": "ACTIVE" if state["enabled"] and age is not None and age < 12 else ("STARTING" if state["enabled"] else "PAUSED"),
+        "status": "ACTIVE" if state["enabled"] and age is not None and age < INTERVAL_SECONDS * 2 else ("STARTING" if state["enabled"] else "PAUSED"),
         "allocated_capital_usd": state["allocated_capital_usd"],
         "started_at": state.get("run_started_at"),
         "run_until": state.get("run_until"),
