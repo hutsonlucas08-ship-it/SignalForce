@@ -8,12 +8,12 @@ import re
 
 
 _AUTOINCREMENT = re.compile(
-    r"\\bINTEGER\\s+PRIMARY\\s+KEY\\s+AUTOINCREMENT\\b", re.IGNORECASE
+    r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b", re.IGNORECASE
 )
-_IGNORE_INSERT = re.compile(r"^\\s*INSERT\\s+OR\\s+IGNORE\\s+INTO\\b", re.IGNORECASE)
-_NOCASE = re.compile(r"\\s+COLLATE\\s+NOCASE\\b", re.IGNORECASE)
+_IGNORE_INSERT = re.compile(r"^\s*INSERT\s+OR\s+IGNORE\s+INTO\b", re.IGNORECASE)
+_NOCASE = re.compile(r"\s+COLLATE\s+NOCASE\b", re.IGNORECASE)
 _NOW_STRFTIME = re.compile(
-    r"strftime\\(\\s*'%Y-%m-%dT%H:%M:%SZ'\\s*,\\s*'now'\\s*\\)",
+    r"strftime\(\s*'%Y-%m-%dT%H:%M:%SZ'\s*,\s*'now'\s*\)",
     re.IGNORECASE,
 )
 
@@ -48,7 +48,7 @@ def translate_migration_sql(sql: str, migration_name: str = "") -> str:
     translated = "".join(pieces)
     if has_nocase and migration_name == "013_customer_identity_foundation.sql":
         translated += (
-             "\nCREATE UNIQUE INDEX IF NOT EXISTS idx_customer_accounts_email_lower "
+            "\nCREATE UNIQUE INDEX IF NOT EXISTS idx_customer_accounts_email_lower "
             "ON customer_accounts (LOWER(email));\n"
         )
     return translated
