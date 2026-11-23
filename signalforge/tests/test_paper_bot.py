@@ -109,14 +109,15 @@ def test_aggressive_paper_bot_can_enter_on_strong_momentum_without_wallet_signal
     assert outcome["entries"][0]["wallet_count"] == 0
 
 
-def test_old_tracked_wallet_buys_do_not_trigger_new_entry():
+def test_old_wallet_buys_are_ignored_but_strong_market_signal_can_still_enter():
     conn = _paper_strategy_db()
     mint = "TokenMint333333333333333333333333333"
     _seed_recent_wallet_buy(conn, "WalletAddress3333333333333333333333", mint, minutes_ago=45)
     _seed_recent_wallet_buy(conn, "WalletAddress4444444444444444444444", mint, minutes_ago=45)
     outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Old Signal"}],
-                               {mint: candidate_pair()}, approved_mints={mint})
-    assert outcome["entries"] == []
+                               {mint: candidate_pair()})
+    assert len(outcome["entries"]) == 1
+    assert outcome["entries"][0]["wallet_count"] == 0
     assert outcome["wallet_signal_count"] == 0
 
 
@@ -128,3 +129,14 @@ def test_aggressive_paper_bot_accepts_one_wallet_buy_with_moderate_market_score(
                                {mint: candidate_pair()})
     assert len(outcome["entries"]) == 1
     assert outcome["entries"][0]["wallet_count"] == 1
+
+
+
+def test_aggressive_market_only_entry_still_rejects_collapsing_momentum():
+    conn = _paper_strategy_db()
+    mint = "TokenMint666666666666666666666666666"
+    pair = candidate_pair()
+    pair["priceChange"]["m5"] = -12
+    outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Weak Momentum"}], {mint: pair})
+    assert outcome["entries"] == []
+    assert outcome["candidate_count"] == 0
