@@ -128,6 +128,7 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "005_tracked_wallets.sql",
         "006_smart_money.sql",
         "007_wallet_quarantine.sql",
+        "008_position_tracking.sql",
     ]
     assert run_migrations(conn) == []
     state = conn.execute("SELECT enabled FROM paper_bot_state WHERE id=1").fetchone()
