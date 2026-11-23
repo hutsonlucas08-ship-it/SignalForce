@@ -481,7 +481,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 attrs = pool.get("attributes") or {}
                 relationships = pool.get("relationships") or {}
                 base_ref = ((relationships.get("base_token") or {}).get("data") or {})
-                token = included.get(base_ref.get("id"), {})
+                quote_ref = ((relationships.get("quote_token") or {}).get("data") or {})
+                base_token = included.get(base_ref.get("id"), {})
+                quote_token = included.get(quote_ref.get("id"), {})
+                quote_like_addresses = {
+                    "So11111111111111111111111111111111111111112",
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                }
+                token = quote_token if base_token.get("address") in quote_like_addresses else base_token
                 address = token.get("address")
                 if not isinstance(address, str) or not address:
                     continue
