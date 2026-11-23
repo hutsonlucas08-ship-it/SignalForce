@@ -54,3 +54,65 @@ def test_paper_bot_starts_paused_and_requires_timed_manual_start():
     assert status["remaining_seconds"] > 0
     status = configure_bot(conn, enabled=False)
     assert status["enabled"] is False
+
+
+from datetime import datetime, timezone
+from app.paper_bot import _recent_wallet_buy_signals, _trade_decisions
+
+
+def _seed_recent_wallet_buy(conn, wallet, mint, minutes_ago=2):
+    from app.db import utcnow
+    conn.execute(
+        "INSERT INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+        (wallet, wallet[:6], utcnow()),
+    )
+    occurred_at = (datetime.now(timezone.utc) - __import__("datetime").timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute(
+        """INSERT INTO wallet_trade_events
+        (wallet_address,signature,mint,side,occurred_at,source,observed_at)
+        VALUES(?,?,?,'buy',?,'helius',?)""",
+        (wallet, "sig-" + wallet[:8], mint, occurred_at, utcnow()),
+    )
+    conn.commit()
+
+
+def _paper_strategy_db():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    return conn
+
+
+def test_recent_smart_money_signal_requires_two_distinct_tracked_wallets_for_normal_score():
+    conn = _paper_strategy_db()
+    mint = "TokenMint111111111111111111111111111"
+    _seed_recent_wallet_buy(conn, "WalletAddress1111111111111111111111", mint)
+    _seed_recent_wallet_buy(conn, "WalletAddress2222222222222222222222", mint)
+    signals = _recent_wallet_buy_signals(conn)
+    assert signals[mint]["wallet_count"] == 2
+    assert signals[mint]["buy_count"] == 2
+
+    outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Signal Token"}],
+                               {mint: candidate_pair()}, approved_mints={mint})
+    assert len(outcome["entries"]) == 1
+    assert outcome["entries"][0]["wallet_count"] == 2
+    assert outcome["entries"][0]["market_score"] > 0
+
+
+def test_paper_bot_does_not_enter_on_momentum_without_tracked_wallet_buy():
+    conn = _paper_strategy_db()
+    mint = "TokenMint222222222222222222222222222"
+    outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Momentum Only"}],
+                               {mint: candidate_pair()}, approved_mints={mint})
+    assert outcome["entries"] == []
+    assert outcome["candidate_count"] == 0
+
+
+def test_old_tracked_wallet_buys_do_not_trigger_new_entry():
+    conn = _paper_strategy_db()
+    mint = "TokenMint333333333333333333333333333"
+    _seed_recent_wallet_buy(conn, "WalletAddress3333333333333333333333", mint, minutes_ago=45)
+    _seed_recent_wallet_buy(conn, "WalletAddress4444444444444444444444", mint, minutes_ago=45)
+    outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Old Signal"}],
+                               {mint: candidate_pair()}, approved_mints={mint})
+    assert outcome["entries"] == []
+    assert outcome["wallet_signal_count"] == 0
