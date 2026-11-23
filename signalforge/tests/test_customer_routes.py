@@ -129,3 +129,34 @@ def test_customer_can_refresh_csrf_after_session_cookie_survives_reload(monkeypa
     wallet = client.post("/v1/customer/wallets", headers={"X-CSRF-Token": fresh.json()["csrf_token"]},
                          json={"wallet_address": "11111111111111111111111111111111"})
     assert wallet.status_code == 200
+
+
+def test_unverified_customer_cannot_sign_in_until_email_link_is_used(monkeypatch):
+    tokens = {}
+    async def fake_send(email, token):
+        tokens[email] = token
+    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
+    client = _client()
+    created = client.post("/v1/customer/register", json={
+        "email": "verify@example.test", "password": "correct horse battery staple"
+    })
+    assert created.status_code == 201
+    denied = client.post("/v1/customer/login", json={
+        "email": "verify@example.test", "password": "correct horse battery staple"
+    })
+    assert denied.status_code == 403
+    assert "Verify your email" in denied.json()["detail"]
+    verified = client.get("/v1/customer/verify-email", params={"token": tokens["verify@example.test"]})
+    assert verified.status_code == 200
+    assert client.post("/v1/customer/login", json={
+        "email": "verify@example.test", "password": "correct horse battery staple"
+    }).status_code == 200
+
+
+def test_public_homepage_serves_customer_launch_experience():
+    client = _client()
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Fresh launches" in response.text
+    assert "Customer workspace" in response.text
+    assert "PAPER DESK" not in response.text
