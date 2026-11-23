@@ -21,6 +21,7 @@ from .db import connect, run_migrations, utcnow
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
 from . import paper, paper_bot, telegram_alerts
+from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
 _price_history = {}
@@ -72,6 +73,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
     app.state.paper_bot_stop = asyncio.Event()
     app.state.paper_bot_task = None
+    app.state.helius_sync_stop = asyncio.Event()
+    app.state.helius_sync_task = None
 
     @app.on_event("startup")
     async def start_paper_bot():
@@ -79,10 +82,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             app.state.paper_bot_task = asyncio.create_task(
                 paper_bot.run_paper_bot(settings.db_path, app.state.paper_bot_stop)
             )
+            if os.getenv("HELIUS_API_KEY"):
+                app.state.helius_sync_task = asyncio.create_task(
+                    run_helius_sync(settings.db_path, app.state.helius_sync_stop)
+                )
 
     @app.on_event("shutdown")
     async def stop_paper_bot():
         app.state.paper_bot_stop.set()
+        app.state.helius_sync_stop.set()
+        helius_task = app.state.helius_sync_task
+        if helius_task is not None:
+            try:
+                await asyncio.wait_for(helius_task, timeout=25)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                helius_task.cancel()
         task = app.state.paper_bot_task
         if task is not None:
             try:
