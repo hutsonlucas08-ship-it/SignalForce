@@ -163,9 +163,14 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
         """SELECT asset_id, token_name, quantity, avg_entry_price, last_price,
                   cost_basis, opened_at, updated_at
            FROM paper_positions
-           WHERE account_id=? AND opened_at>=?
+           WHERE account_id=? AND (
+               opened_at>=? OR asset_id IN (
+                   SELECT DISTINCT asset_id FROM paper_trades
+                   WHERE account_id=? AND created_at>=? AND side='buy'
+               )
+           )
            ORDER BY opened_at DESC""",
-        (account["id"], session_started_at),
+        (account["id"], session_started_at, account["id"], session_started_at),
     ).fetchall()]
     unrealized = sum((float(p["last_price"]) - float(p["avg_entry_price"])) * float(p["quantity"])
                      for p in positions)
