@@ -57,7 +57,7 @@ def _state(conn):
 
 
 def _set_status(conn, **values):
-    allowed = {"heartbeat_at", "last_scan_at", "last_error", "started_at", "run_started_at", "run_until", "session_seconds"}
+    allowed = {"heartbeat_at", "last_scan_at", "last_error", "started_at", "run_started_at", "run_until", "run_stopped_at", "session_seconds"}
     fields = [(k, v) for k, v in values.items() if k in allowed]
     if fields:
         conn.execute("UPDATE paper_bot_state SET " + ",".join(k+"=?" for k,_ in fields) + " WHERE id=1",
@@ -382,7 +382,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                     state = _state(conn)
                     _set_status(conn, heartbeat_at=utcnow())
                     if state.get("run_until") and state["enabled"] and datetime.fromisoformat(state["run_until"].replace("Z","+00:00")) <= datetime.now(timezone.utc):
-                        conn.execute("UPDATE paper_bot_state SET enabled=0 WHERE id=1")
+                        conn.execute("UPDATE paper_bot_state SET enabled=0,run_stopped_at=COALESCE(run_stopped_at,run_until) WHERE id=1")
                         conn.commit()
                         state = _state(conn)
                     if not state["enabled"] or not _claim(conn):
@@ -446,10 +446,12 @@ def bot_status(conn):
             pass
     return {
         "enabled": bool(state["enabled"]),
-        "status": "ACTIVE" if state["enabled"] and age is not None and age < INTERVAL_SECONDS * 2 else ("STARTING" if state["enabled"] else "PAUSED"),
+        "status": "ACTIVE" if state["enabled"] and age is not None and age < INTERVAL_SECONDS * 2 else ("STARTING" if state["enabled"] else "STOPPED"),
         "allocated_capital_usd": state["allocated_capital_usd"],
         "started_at": state.get("run_started_at"),
         "run_until": state.get("run_until"),
+        "run_stopped_at": state.get("run_stopped_at"),
+        "runtime_seconds": max(0, int(((datetime.fromisoformat((state.get("run_stopped_at") or utcnow()).replace("Z","+00:00"))) - datetime.fromisoformat(state["run_started_at"].replace("Z","+00:00"))).total_seconds())) if state.get("run_started_at") else 0,
         "session_seconds": state.get("session_seconds"),
         "remaining_seconds": max(0, int((datetime.fromisoformat(state["run_until"].replace("Z","+00:00"))-datetime.now(timezone.utc)).total_seconds())) if state.get("run_until") and state["enabled"] else 0,
         "heartbeat_at": state["heartbeat_at"],
@@ -489,9 +491,9 @@ def configure_bot(conn, enabled=None, allocated_capital_usd=None, duration_secon
                 raise ValueError("Choose a run duration of 15 minutes, 30 minutes, 1 hour, 2 hours, or 4 hours")
             started = datetime.now(timezone.utc)
             ends = started + timedelta(seconds=duration_seconds)
-            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,session_seconds=?,last_error=NULL WHERE id=1",
+            conn.execute("UPDATE paper_bot_state SET enabled=1,run_started_at=?,run_until=?,run_stopped_at=NULL,session_seconds=?,last_error=NULL WHERE id=1",
                          (started.strftime("%Y-%m-%dT%H:%M:%SZ"),ends.strftime("%Y-%m-%dT%H:%M:%SZ"),duration_seconds))
         else:
-            conn.execute("UPDATE paper_bot_state SET enabled=0,run_until=NULL WHERE id=1")
+            conn.execute("UPDATE paper_bot_state SET enabled=0,run_until=NULL,run_stopped_at=? WHERE id=1",(utcnow(),))
     conn.commit()
     return bot_status(conn)
