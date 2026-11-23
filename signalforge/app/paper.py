@@ -193,6 +193,7 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
         "invested_usd": round(invested, 2),
         "realized_pnl_usd": round(realized, 2),
         "unrealized_pnl_usd": round(unrealized, 2),
+        "session_profit_usd": round(realized + unrealized, 2),
         "open_positions": positions,
         "trades": trades,
         "trade_count": len(trades),
