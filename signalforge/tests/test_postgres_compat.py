@@ -1,4 +1,5 @@
 from app.postgres_compat import translate_migration_sql
+from app.db import HybridRow, _postgres_runtime_sql, _qmark_to_pyformat
 
 
 def test_translates_autoincrement_primary_keys():
@@ -37,3 +38,25 @@ def test_does_not_add_email_index_to_unrelated_migrations():
     sql = "CREATE TABLE sample (name TEXT COLLATE NOCASE);"
     result = translate_migration_sql(sql, "001_init.sql")
     assert "LOWER(email)" not in result
+
+
+
+def test_qmark_parameter_translation_preserves_question_marks_in_literals():
+    sql = "SELECT * FROM events WHERE label='why?' AND id=? AND note=\"what?\""
+    assert _qmark_to_pyformat(sql) == "SELECT * FROM events WHERE label='why?' AND id=%s AND note=\"what?\""
+
+
+def test_postgres_paper_bot_claim_uses_row_lock():
+    sql = "SELECT lock_owner,lock_until_epoch FROM paper_bot_state WHERE id=1"
+    assert _postgres_runtime_sql(sql).endswith("FOR UPDATE")
+
+
+def test_postgres_runtime_translates_immediate_begin():
+    assert _postgres_runtime_sql("BEGIN IMMEDIATE") == "BEGIN"
+
+
+def test_hybrid_row_supports_mapping_and_sqlite_integer_indexes():
+    row = HybridRow(["id", "email"], [7, "trader@example.test"])
+    assert row["email"] == "trader@example.test"
+    assert row[0] == 7
+    assert dict(row) == {"id": 7, "email": "trader@example.test"}
