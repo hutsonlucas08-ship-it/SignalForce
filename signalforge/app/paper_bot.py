@@ -40,7 +40,7 @@ EXIT_CONFIG = exit_rules.ExitConfig(stop_loss_pct=STOP_LOSS_PCT)
 
 
 def _state(conn):
-    conn.execute("INSERT OR IGNORE INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,0,1000)")
+    conn.execute("INSERT INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,0,1000) ON CONFLICT DO NOTHING")
     conn.commit()
     state = dict(conn.execute("SELECT * FROM paper_bot_state WHERE id=1").fetchone())
     paper.ensure_accounts(conn)
@@ -71,7 +71,7 @@ def _set_status(conn, **values):
 
 def _claim(conn):
     now = time.time()
-    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("BEGIN")
     row = conn.execute("SELECT lock_owner,lock_until_epoch FROM paper_bot_state WHERE id=1").fetchone()
     if row and row["lock_owner"] not in (None, OWNER) and row["lock_until_epoch"] > now:
         conn.rollback()
