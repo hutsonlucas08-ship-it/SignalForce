@@ -15,6 +15,12 @@ services:
         value: /var/data/signalforce.db
       - key: SIGNALFORGE_COOKIE_SECURE
         value: "true"
+      - key: SIGNALFORGE_PUBLIC_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SIGNALFORCE_EMAIL_FROM
+        sync: false
       - key: SIGNALFORGE_READ_KEYS
         sync: false
       - key: SIGNALFORGE_ADMIN_KEYS
