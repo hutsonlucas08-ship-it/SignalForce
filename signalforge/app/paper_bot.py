@@ -468,13 +468,16 @@ def bot_status(conn):
         "last_error": state["last_error"],
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
-                        "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"smart_money_lookback_minutes":SMART_MONEY_LOOKBACK_MINUTES,"minimum_distinct_wallet_buys":MIN_DISTINCT_WALLET_BUYS,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":None},
+                        "min_buys_5m":MIN_BUYS_5M,"smart_money_lookback_minutes":SMART_MONEY_LOOKBACK_MINUTES,"minimum_distinct_wallet_buys":MIN_DISTINCT_WALLET_BUYS,"market_only_min_score":MARKET_ONLY_MIN_SCORE,"single_wallet_min_score":SINGLE_WALLET_MIN_MARKET_SCORE,"max_open_positions":MAX_OPEN_POSITIONS,"position_equity_fraction":POSITION_EQUITY_FRACTION,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":None},
         "exit_rules": exit_rules.describe(EXIT_CONFIG),
-        "strategy": "combined_smart_money_momentum",
+        "strategy": "aggressive_smart_money_or_momentum",
         "smart_money_lookback_minutes": SMART_MONEY_LOOKBACK_MINUTES,
         "minimum_distinct_wallet_buys": MIN_DISTINCT_WALLET_BUYS,
         "single_wallet_market_score_threshold": SINGLE_WALLET_MIN_MARKET_SCORE,
-        "note": "Paper simulation only. Entries require recent buys from tracked wallets plus independent market activity, liquidity, momentum, and BubbleMaps launch-health approval. Exits use a hard stop, liquidity-collapse protection, uncapped trailing stop, one partial-profit sale, and a 24-hour dead-money timer. Missing risk evidence is rejected; the scanner is not the full market and may make no trades."
+        "market_only_min_score": MARKET_ONLY_MIN_SCORE,
+        "max_open_positions": MAX_OPEN_POSITIONS,
+        "position_equity_fraction": POSITION_EQUITY_FRACTION,
+        "note": "AGGRESSIVE PAPER SIMULATION ONLY. Entries can qualify from one recent tracked-wallet buy OR strong independent market momentum. BubbleMaps is not a hard entry gate. Lower liquidity/volume thresholds, 10% equity position sizing, up to 20 open positions, and 30-second scans increase simulated trade frequency and risk. Existing exit protections remain active. No real funds or signatures are used."
     }
 
 
