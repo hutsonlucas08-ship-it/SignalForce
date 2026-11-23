@@ -56,6 +56,9 @@ class WalletWatchRequest(BaseModel):
     wallet_address: str = Field(min_length=32, max_length=44)
     label: Optional[str] = Field(default=None, max_length=80)
 
+class BulkWalletWatchRequest(BaseModel):
+    wallet_addresses: list[str] = Field(min_length=1, max_length=1000)
+
 
 class RiskScreenRequest(BaseModel):
     liquidity_usd: Optional[float] = Field(default=None, ge=0)
@@ -624,6 +627,41 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                      (address, body.label or address[:6]+"…"+address[-4:], utcnow()))
         conn.commit()
         return {"added": True, "wallet_address": address, "label": body.label or address[:6]+"…"+address[-4:]}
+
+    @app.post("/v1/copytraders/wallets/bulk")
+    def bulk_add_tracked_wallets(body: BulkWalletWatchRequest, _: Principal = Depends(require_read), conn=Depends(get_conn)):
+        import re
+        seen = set()
+        added = 0
+        duplicates = 0
+        invalid = []
+        for raw_address in body.wallet_addresses:
+            address = raw_address.strip()
+            if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
+                if len(invalid) < 20:
+                    invalid.append(address[:80])
+                continue
+            if address in seen:
+                duplicates += 1
+                continue
+            seen.add(address)
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+                (address, address[:6] + "…" + address[-4:], utcnow()),
+            )
+            if cursor.rowcount:
+                added += 1
+            else:
+                duplicates += 1
+        conn.commit()
+        return {
+            "submitted_count": len(body.wallet_addresses),
+            "unique_valid_count": len(seen),
+            "added_count": added,
+            "duplicate_count": duplicates,
+            "invalid_count": len(body.wallet_addresses) - len(seen) - duplicates,
+            "invalid_addresses": invalid,
+        }
 
     @app.get("/v1/copytraders/activity")
     async def tracked_wallet_activity(wallet: str, _: Principal = Depends(require_read), conn=Depends(get_conn)):
