@@ -62,14 +62,14 @@ def test_pending_or_missing_accounts_cannot_get_sessions():
         create_customer_session(conn, "acct-1")
 
 
-def test_registration_creates_active_beta_account_and_normalizes_email():
+def test_registration_creates_pending_account_and_normalizes_email():
     from app.customer_auth import register_customer_account
     conn = connect(":memory:")
     run_migrations(conn)
     account_id = register_customer_account(conn, "  Person@Example.Test ", "correct horse battery staple")
     row = conn.execute("SELECT email,status,password_hash FROM customer_accounts WHERE id=?", (account_id,)).fetchone()
     assert row["email"] == "person@example.test"
-    assert row["status"] == "active"
+    assert row["status"] == "pending"
     assert verify_password("correct horse battery staple", row["password_hash"])
     session = create_customer_session(conn, account_id)
     assert session["session_token"]
@@ -84,3 +84,14 @@ def test_registration_rejects_invalid_email_and_duplicate_email():
     register_customer_account(conn, "person@example.test", "correct horse battery staple")
     with pytest.raises(CustomerAuthError):
         register_customer_account(conn, "PERSON@example.test", "another correct horse battery staple")
+
+
+def test_email_verification_tokens_expire_and_are_one_time():
+    from app.customer_auth import create_email_verification_token, consume_email_verification_token
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _account(conn, status="pending")
+    token = create_email_verification_token(conn, "acct-1")
+    assert consume_email_verification_token(conn, token)
+    assert not consume_email_verification_token(conn, token)
+    assert conn.execute("SELECT status,email_verified_at FROM customer_accounts WHERE id='acct-1'").fetchone()["status"] == "active"
