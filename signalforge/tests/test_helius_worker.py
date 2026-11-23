@@ -115,6 +115,60 @@ def test_sync_once_with_empty_watchlist_is_healthy(tmp_path):
     asyncio.run(run())
 
 
+
+def test_repeated_404_quarantines_wallet_without_failing_source(tmp_path):
+    async def run():
+        db = tmp_path / "quarantine.db"
+        setup_db(db)
+        for expected_count in (1, 2, 3):
+            result = await sync_once(str(db), "test-key", client=FakeHelius(status=404))
+            assert result["wallet_errors"] == 0
+            assert result["wallets_unavailable"] == 1
+            conn = connect(str(db))
+            row = conn.execute(
+                "SELECT helius_status, helius_404_count, helius_last_error "
+                "FROM tracked_wallets WHERE wallet_address=?", (WALLET,)
+            ).fetchone()
+            assert row["helius_404_count"] == expected_count
+            assert row["helius_last_error"] == "http_404"
+            assert row["helius_status"] == ("quarantined" if expected_count == 3 else "active")
+            source = conn.execute(
+                "SELECT consecutive_failures FROM data_sources WHERE name=?",
+                ("helius_wallet_sync",),
+            ).fetchone()
+            assert source[0] == 0
+            conn.close()
+        fake = FakeHelius()
+        skipped = await sync_once(str(db), "test-key", client=fake)
+        assert skipped["wallets_checked"] == 0
+        assert skipped["wallets_quarantined"] == 1
+        assert fake.calls == []
+    asyncio.run(run())
+
+
+def test_successful_poll_resets_prior_404_count(tmp_path):
+    async def run():
+        db = tmp_path / "recover404.db"
+        setup_db(db)
+        conn = connect(str(db))
+        conn.execute(
+            "UPDATE tracked_wallets SET helius_404_count=2, helius_last_error='http_404' "
+            "WHERE wallet_address=?", (WALLET,)
+        )
+        conn.commit()
+        conn.close()
+        await sync_once(str(db), "test-key", client=FakeHelius())
+        conn = connect(str(db))
+        row = conn.execute(
+            "SELECT helius_status, helius_404_count, helius_last_error "
+            "FROM tracked_wallets WHERE wallet_address=?", (WALLET,)
+        ).fetchone()
+        assert row["helius_status"] == "active"
+        assert row["helius_404_count"] == 0
+        assert row["helius_last_error"] is None
+        conn.close()
+    asyncio.run(run())
+
 def test_sync_once_paginates_until_previous_checkpoint(tmp_path):
     async def run():
         db = tmp_path / "pages.db"
