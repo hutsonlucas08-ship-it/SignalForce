@@ -62,14 +62,14 @@ def test_pending_or_missing_accounts_cannot_get_sessions():
         create_customer_session(conn, "acct-1")
 
 
-def test_registration_creates_pending_account_and_normalizes_email():
+def test_registration_creates_active_beta_account_and_normalizes_email():
     from app.customer_auth import register_customer_account
     conn = connect(":memory:")
     run_migrations(conn)
     account_id = register_customer_account(conn, "  Person@Example.Test ", "correct horse battery staple")
     row = conn.execute("SELECT email,status,password_hash FROM customer_accounts WHERE id=?", (account_id,)).fetchone()
     assert row["email"] == "person@example.test"
-    assert row["status"] == "pending"
+    assert row["status"] == "active"
     assert verify_password("correct horse battery staple", row["password_hash"])
     with pytest.raises(CustomerAuthError):
         create_customer_session(conn, account_id)
