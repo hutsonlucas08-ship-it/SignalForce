@@ -72,7 +72,7 @@ class RiskScreenRequest(BaseModel):
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or load_settings()
-    app = FastAPI(title="SignalForge Core", version=settings.version)
+    app = FastAPI(title="SignalForce", version=settings.version)
     app.state.settings = settings
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
     app.state.paper_bot_stop = asyncio.Event()
