@@ -128,8 +128,9 @@ def add_observation(
             collected_at,
         ),
     )
+    observation_id = cursor.fetchone()["id"]
     conn.commit()
-    return cursor.fetchone()["id"]
+    return observation_id
 
 
 def get_observations(
