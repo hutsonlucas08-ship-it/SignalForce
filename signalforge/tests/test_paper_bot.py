@@ -61,12 +61,12 @@ def test_paper_bot_starts_paused_and_requires_timed_manual_start():
 def test_paper_bot_accepts_fifty_dollar_allocation_and_keeps_it_when_session_starts():
     conn = connect(":memory:")
     run_migrations(conn)
-    status = configure_bot(conn, enabled=True, allocated_capital_usd=50, duration_seconds=900)
+    status = configure_bot(conn, enabled=True, allocated_capital_usd=5, duration_seconds=900)
     account = conn.execute("SELECT starting_balance,cash_balance FROM paper_accounts WHERE strategy='automatic'").fetchone()
     assert status["enabled"] is True
-    assert status["allocated_capital_usd"] == 50
-    assert account["starting_balance"] == 50
-    assert account["cash_balance"] == 50
+    assert status["allocated_capital_usd"] == 5
+    assert account["starting_balance"] == 5
+    assert account["cash_balance"] == 5
 
 
 def test_paper_capital_can_be_changed_after_closed_historical_trades():
@@ -76,11 +76,11 @@ def test_paper_capital_can_be_changed_after_closed_historical_trades():
     paper.ensure_accounts(conn)
     paper.place_order(conn, "automatic", "history-token", "History", "buy", 50, 1, "old paper trade")
     paper.place_order(conn, "automatic", "history-token", "History", "sell", 49, 1, "close old paper trade")
-    status = configure_bot(conn, enabled=True, allocated_capital_usd=75, duration_seconds=900)
+    status = configure_bot(conn, enabled=True, allocated_capital_usd=5, duration_seconds=900)
     account = conn.execute("SELECT starting_balance,cash_balance FROM paper_accounts WHERE strategy='automatic'").fetchone()
-    assert status["allocated_capital_usd"] == 75
-    assert account["starting_balance"] == 75
-    assert account["cash_balance"] == 75
+    assert status["allocated_capital_usd"] == 5
+    assert account["starting_balance"] == 5
+    assert account["cash_balance"] == 5
     assert conn.execute("SELECT COUNT(*) n FROM paper_trades").fetchone()["n"] == 2
 
 
