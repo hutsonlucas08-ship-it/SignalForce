@@ -362,6 +362,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except customer_integrations.CustomerIntegrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
+    @app.get("/account", include_in_schema=False)
+    def customer_workspace():
+        """Serve the separate customer account and paper-trading workspace."""
+        return FileResponse(Path(__file__).parent / "static" / "customer.html")
+
     @app.get("/", include_in_schema=False)
     def dashboard():
         """Serve the SignalForge browser dashboard."""
