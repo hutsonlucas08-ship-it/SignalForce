@@ -156,3 +156,75 @@ def test_new_paper_session_resets_old_positions_but_preserves_trade_history():
     assert conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?", (account["id"],)).fetchone()["n"] == 0
     assert account["cash_balance"] == account["starting_balance"]
     assert conn.execute("SELECT COUNT(*) n FROM paper_trades").fetchone()["n"] == before
+
+
+
+def test_trade_decisions_reports_exact_market_data_rejection_reason():
+    conn = _paper_strategy_db()
+    mint = "TokenMint777777777777777777777777777"
+    pair = candidate_pair()
+    pair["liquidity"] = {"usd": 1000}
+    outcome = _trade_decisions(conn, [{"asset_id": mint, "token_name": "Low Liquidity"}], {mint: pair})
+    assert outcome["candidate_count"] == 0
+    assert outcome["rejection_reasons"]["Liquidity below $5,000 or missing"] == 1
+
+
+def test_fetch_pairs_matches_requested_quote_token_and_does_not_use_base_price_as_quote_price():
+    import asyncio
+    from app.paper_bot import _fetch_pairs
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [{
+                "chainId": "solana",
+                "baseToken": {"address": "BaseMint", "name": "Base"},
+                "quoteToken": {"address": "QuoteMint", "name": "Quote"},
+                "priceUsd": "2.0",
+                "priceNative": "4.0",
+                "liquidity": {"usd": 10000},
+            }]
+
+    class Client:
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    pairs = asyncio.run(_fetch_pairs(Client(), ["QuoteMint"]))
+    assert "QuoteMint" in pairs
+    assert float(pairs["QuoteMint"]["priceUsd"]) == 0.5
+    assert pairs["QuoteMint"]["baseToken"]["address"] == "QuoteMint"
+
+
+def test_fetch_gecko_new_launches_extracts_non_quote_token_addresses():
+    import asyncio
+    from app import paper_bot
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "data": [{
+                    "id": "solana_pool",
+                    "relationships": {
+                        "base_token": {"data": {"id": "token_base"}},
+                        "quote_token": {"data": {"id": "token_quote"}},
+                    },
+                }],
+                "included": [
+                    {"type": "token", "id": "token_base", "attributes": {"address": "FreshMint", "name": "Fresh Coin"}},
+                    {"type": "token", "id": "token_quote", "attributes": {"address": "So11111111111111111111111111111111111111112", "name": "SOL"}},
+                ],
+            }
+
+    class Client:
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    paper_bot._GECKO_LAUNCH_CACHE = (0.0, [])
+    launches = asyncio.run(paper_bot._fetch_gecko_new_launches(Client()))
+    assert launches == [{"asset_id": "FreshMint", "token_name": "Fresh Coin"}]
+    paper_bot._GECKO_LAUNCH_CACHE = (0.0, [])
