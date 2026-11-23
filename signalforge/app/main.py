@@ -525,49 +525,124 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/v1/research/trending-now")
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
-        """Rank recently discovered Solana tokens using live DEX Screener activity."""
-        assets = scan_assets(conn, 50)
-        mints = [a["asset_id"] for a in assets if a.get("asset_id")]
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            pairs = await paper_bot._fetch_pairs(client, mints) if mints else {}
-        names = {a["asset_id"]: a.get("token_name") for a in assets}
-        images = {a["asset_id"]: a.get("image_url") for a in assets}
-        if not mints:
-            return {
-                "candidates": [], "scanned": 0, "priced": 0, "rejected": 0,
-                "source": "DEX Screener market data",
-                "note": "No locally discovered Solana tokens are available to rank yet.",
+        """Rank current Solana trending pools from GeckoTerminal, enriched by DEX Screener."""
+        now = time.time()
+        cached = _launch_cache.get("trending")
+        if cached and now - cached[0] < 30:
+            return cached[1]
+        try:
+            async with httpx.AsyncClient(timeout=8.0, headers={"Accept": "application/json"}) as client:
+                response = await client.get(
+                    "https://api.geckoterminal.com/api/v2/networks/solana/trending_pools",
+                    params={"include": "base_token,quote_token,dex", "page": 1},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                included = {
+                    item.get("id"): item.get("attributes") or {}
+                    for item in (payload.get("included") or [])
+                    if isinstance(item, dict) and item.get("type") == "token"
+                }
+                stable = {
+                    "So11111111111111111111111111111111111111112",
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                }
+                tokens = {}
+                for pool in payload.get("data") or []:
+                    if not isinstance(pool, dict):
+                        continue
+                    attrs = pool.get("attributes") or {}
+                    rel = pool.get("relationships") or {}
+                    base_ref = ((rel.get("base_token") or {}).get("data") or {})
+                    quote_ref = ((rel.get("quote_token") or {}).get("data") or {})
+                    base = included.get(base_ref.get("id"), {})
+                    quote = included.get(quote_ref.get("id"), {})
+                    token = quote if base.get("address") in stable else base
+                    mint = token.get("address")
+                    if not isinstance(mint, str) or not mint:
+                        continue
+                    token_image = token.get("image_url") or token.get("image")
+                    if not isinstance(token_image, str) or not token_image.startswith("https://"):
+                        token_image = None
+                    tokens.setdefault(mint, {
+                        "asset_id": mint,
+                        "name": token.get("name") or token.get("symbol") or mint[:8],
+                        "symbol": token.get("symbol") or "",
+                        "image_url": token_image,
+                        "price_usd": attrs.get("base_token_price_usd"),
+                        "liquidity_usd": attrs.get("reserve_in_usd"),
+                        "volume_5m_usd": (attrs.get("volume_usd") or {}).get("m5"),
+                        "volume_1h_usd": (attrs.get("volume_usd") or {}).get("h1"),
+                        "volume_24h_usd": (attrs.get("volume_usd") or {}).get("h24"),
+                        "price_change_1h_pct": (attrs.get("price_change_percentage") or {}).get("h1"),
+                        "price_change_24h_pct": (attrs.get("price_change_percentage") or {}).get("h24"),
+                        "pool_address": (pool.get("id") or "").split("_", 1)[-1],
+                        "source": "GeckoTerminal",
+                    })
+                mints = list(tokens)
+                pairs = await paper_bot._fetch_pairs(client, mints) if mints else {}
+            candidates = []
+            for mint, item in tokens.items():
+                pair = pairs.get(mint) or {}
+                base = pair.get("baseToken") or {}
+                info = pair.get("info") or {}
+                txns = pair.get("txns") or {}
+                volume = pair.get("volume") or {}
+                changes = pair.get("priceChange") or {}
+                liquidity = (pair.get("liquidity") or {}).get("usd")
+                liquidity = liquidity if liquidity is not None else item.get("liquidity_usd")
+                volume5 = volume.get("m5") if volume.get("m5") is not None else item.get("volume_5m_usd")
+                volume1 = volume.get("h1") if volume.get("h1") is not None else item.get("volume_1h_usd")
+                volume24 = volume.get("h24") if volume.get("h24") is not None else item.get("volume_24h_usd")
+                change1 = changes.get("h1") if changes.get("h1") is not None else item.get("price_change_1h_pct")
+                change24 = changes.get("h24") if changes.get("h24") is not None else item.get("price_change_24h_pct")
+                buys5 = (txns.get("m5") or {}).get("buys")
+                sells5 = (txns.get("m5") or {}).get("sells")
+                # Broad discovery ranking: never hide a currently trending pool merely
+                # because one optional metric is unavailable from a provider.
+                score = 0.0
+                score += min(25.0, max(0.0, float(liquidity or 0)) / 10000 * 5)
+                score += min(25.0, max(0.0, float(volume5 or 0)) / 1000 * 5)
+                score += min(20.0, max(0.0, float(volume1 or 0)) / 10000 * 5)
+                score += min(15.0, max(0.0, float(buys5 or 0)) * 1.5)
+                score += min(15.0, max(0.0, float(change1 or 0)) * 0.5)
+                image_url = info.get("imageUrl") or item.get("image_url")
+                if not isinstance(image_url, str) or not image_url.startswith("https://"):
+                    image_url = None
+                candidates.append({
+                    **item,
+                    "name": item.get("name") or base.get("name") or mint[:8],
+                    "symbol": item.get("symbol") or base.get("symbol") or "",
+                    "image_url": image_url,
+                    "score": round(score, 2),
+                    "price_usd": pair.get("priceUsd") or item.get("price_usd"),
+                    "market_cap_usd": pair.get("marketCap") or pair.get("fdv"),
+                    "liquidity_usd": liquidity,
+                    "volume_5m_usd": volume5,
+                    "volume_1h_usd": volume1,
+                    "volume_24h_usd": volume24,
+                    "buys_5m": buys5,
+                    "sells_5m": sells5,
+                    "price_change_5m_pct": changes.get("m5"),
+                    "price_change_1h_pct": change1,
+                    "price_change_24h_pct": change24,
+                    "source": "GeckoTerminal + DEX Screener" if pair else "GeckoTerminal",
+                })
+            candidates.sort(key=lambda row: row["score"], reverse=True)
+            result = {
+                "candidates": candidates[:20],
+                "scanned": len(mints),
+                "priced": len(pairs),
+                "rejected": max(0, len(mints) - len(candidates)),
+                "source": "GeckoTerminal trending Solana pools, enriched with DEX Screener market data",
+                "note": "Market-wide trending-pool discovery; missing optional market metrics do not remove a token from the list. Rankings are informational, not a safety or profitability guarantee.",
             }
-        candidates, rejected = [], 0
-        for mint, pair in pairs.items():
-            score, reason = paper_bot._score(pair)
-            if score is None:
-                rejected += 1
-                continue
-            base = pair.get("baseToken") or {}
-            info = pair.get("info") or {}
-            candidates.append({
-                "asset_id": mint,
-                "name": names.get(mint) or base.get("name") or mint[:8],
-                "symbol": base.get("symbol"),
-                "image_url": info.get("imageUrl") or images.get(mint),
-                "score": score,
-                "price_usd": pair.get("priceUsd"),
-                "market_cap_usd": pair.get("marketCap") or pair.get("fdv"),
-                "liquidity_usd": (pair.get("liquidity") or {}).get("usd"),
-                "volume_5m_usd": (pair.get("volume") or {}).get("m5"),
-                "buys_5m": ((pair.get("txns") or {}).get("m5") or {}).get("buys"),
-                "sells_5m": ((pair.get("txns") or {}).get("m5") or {}).get("sells"),
-                "price_change_5m_pct": ((pair.get("priceChange") or {}).get("m5")),
-                "source": "DEX Screener",
-            })
-        candidates.sort(key=lambda x: x["score"], reverse=True)
-        return {
-            "candidates": candidates[:20], "scanned": len(mints),
-            "priced": len(pairs), "rejected": rejected,
-            "source": "DEX Screener live pair activity across SignalForge-discovered Solana tokens",
-            "note": "Ranks only tokens SignalForge has discovered, using liquidity, volume, transaction activity and momentum. It is not a complete market-wide trending list. No score guarantees safety or profit.",
-        }
+            _launch_cache["trending"] = (now, result)
+            return result
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError, KeyError):
+            log.warning("GeckoTerminal trending feed unavailable")
+            raise HTTPException(status_code=502, detail="GeckoTerminal's Solana trending feed is temporarily unavailable")
 
     @app.get("/v1/integrations/helius/status")
     async def helius_integration_status(_: Principal = Depends(require_read)):
@@ -916,7 +991,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         async with httpx.AsyncClient(timeout=4.0, headers={"Accept": "application/json"}) as client:
             pairs = await paper_bot._fetch_pairs(client, mints)
         prices = {}
+        images = {}
         for mint, pair in pairs.items():
+            info = pair.get("info") or {}
+            image_url = info.get("imageUrl")
+            if isinstance(image_url, str) and image_url.startswith("https://"):
+                images[mint] = image_url
             try:
                 price = float(pair.get("priceUsd"))
             except (TypeError, ValueError):
@@ -925,6 +1005,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 prices[mint] = price
         return {
             "prices": prices,
+            "images": images,
             "observed_at": utcnow(),
             "source": "DexScreener",
             "position_count": len(mints),
