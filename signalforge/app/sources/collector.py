@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from urllib.parse import urlencode
 
 import websockets
@@ -17,6 +18,19 @@ from app.sources.pumpportal import MAX_MESSAGE_SIZE
 SOURCE_NAME = "pumpportal"
 DEFAULT_WS_URL = "wss://pumpportal.fun/api/data"
 logger = logging.getLogger(__name__)
+_SECRET_RE = re.compile(r"(?i)(api[-_]?key=)[^&\\s'\"]+")
+
+
+def redact_secrets(text: str) -> str:
+    """Redact query-string API keys before logging or persisting provider errors."""
+    return _SECRET_RE.sub(r"\\1[redacted]", text)
+
+
+async def _wait_backoff(stop_event: asyncio.Event, seconds: float) -> None:
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=seconds)
+    except asyncio.TimeoutError:
+        pass
 
 
 def build_ws_url(api_key: str | None = None) -> str:
@@ -62,9 +76,7 @@ async def run_pumpportal_collector(
                 logger.info("Connected to PumpPortal; subscribing to new-token and migration events")
                 await websocket.send(json.dumps({"method": "subscribeNewToken"}))
                 await websocket.send(json.dumps({"method": "subscribeMigration"}))
-                store.record_source_success(conn, SOURCE_NAME)
                 logger.info("Subscriptions sent; waiting for token events")
-                backoff = min_backoff
 
                 while not stop_event.is_set():
                     try:
@@ -78,30 +90,26 @@ async def run_pumpportal_collector(
                     try:
                         observation_id = process_message(conn, SOURCE_NAME, raw)
                         if observation_id is not None:
+                            backoff = min_backoff
                             logger.info("Stored PumpPortal observation id=%s", observation_id)
                     except (ValueError, UnicodeError) as exc:
                         # Invalid provider frames are counted by ingestion and
                         # must not terminate an otherwise healthy stream.
-                        logger.warning("Ignored invalid PumpPortal frame: %s", exc)
+                        logger.warning("Ignored invalid PumpPortal frame: %s", redact_secrets(str(exc)))
                         continue
 
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("PumpPortal collector connection failed")
-            store.record_source_failure(
-                conn,
-                SOURCE_NAME,
-                f"{type(exc).__name__}: {str(exc)[:400]}",
-            )
+            safe_error = f"{type(exc).__name__}: {redact_secrets(str(exc))[:400]}"
+            # Tracebacks can include the websocket URL, which may contain a provider key.
+            logger.error("PumpPortal collector connection failed: %s", safe_error)
+            store.record_source_failure(conn, SOURCE_NAME, safe_error)
 
         if stop_event.is_set():
             break
 
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=backoff)
-        except asyncio.TimeoutError:
-            pass
+        await _wait_backoff(stop_event, backoff)
         backoff = min(backoff * 2, max_backoff)
 
 
@@ -124,6 +132,7 @@ def main() -> None:
     import logging
 
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
     try:
         asyncio.run(_run_from_environment())
     except KeyboardInterrupt:
