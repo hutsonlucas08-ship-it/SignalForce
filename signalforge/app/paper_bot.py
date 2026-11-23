@@ -565,8 +565,8 @@ def bot_status(conn):
 def configure_bot(conn, enabled=None, allocated_capital_usd=None, duration_seconds=None):
     state = _state(conn)
     if allocated_capital_usd is not None:
-        if not isinstance(allocated_capital_usd,(int,float)) or allocated_capital_usd < 50 or allocated_capital_usd > 100000:
-            raise ValueError("Virtual capital must be between $50 and $100,000")
+        if not isinstance(allocated_capital_usd,(int,float)) or allocated_capital_usd < 5 or allocated_capital_usd > 100000000:
+            raise ValueError("Virtual capital must be between $5 and $100,000,000")
         if state.get("enabled") and enabled is not False:
             raise ValueError("Stop the paper session before changing virtual capital")
         account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
