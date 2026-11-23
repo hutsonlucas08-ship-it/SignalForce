@@ -5,7 +5,6 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from .postgres_compat import translate_migration_sql
 
@@ -175,6 +174,8 @@ def run_migrations(conn, directory: Path = MIGRATIONS_DIR) -> list:
         row["name"]: row["checksum"]
         for row in conn.execute("SELECT name, checksum FROM schema_migrations")
     }
+    # End the read transaction before opening one transaction per migration.
+    conn.commit()
     newly = []
     for path in sorted(directory.glob("*.sql")):
         source_sql = path.read_text()
