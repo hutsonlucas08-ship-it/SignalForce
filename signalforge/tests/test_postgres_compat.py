@@ -1,5 +1,5 @@
 from app.postgres_compat import translate_migration_sql
-from app.db import HybridRow, _postgres_runtime_sql, _qmark_to_pyformat
+from app.db import HybridRow, _hybrid_row_factory, _postgres_runtime_sql, _qmark_to_pyformat
 
 
 def test_translates_autoincrement_primary_keys():
@@ -83,3 +83,12 @@ def test_translates_current_timestamp_assignment_to_text():
         "015_activate_existing_beta_accounts.sql",
     )
     assert "updated_at=to_char(timezone('utc', CURRENT_TIMESTAMP)" in result
+
+
+
+def test_hybrid_row_factory_handles_commands_without_result_columns():
+    class CommandCursor:
+        description = None
+
+    make_row = _hybrid_row_factory(CommandCursor())
+    assert make_row(()) == ()
