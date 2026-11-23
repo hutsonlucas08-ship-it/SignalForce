@@ -2,17 +2,12 @@ services:
   - type: web
     name: signalforce
     runtime: docker
-    plan: starter
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    disk:
-      name: signalforce-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
-      - key: SIGNALFORGE_DB_PATH
-        value: /var/data/signalforce.db
+      - key: DATABASE_URL
+        sync: false
       - key: SIGNALFORGE_COOKIE_SECURE
         value: "true"
       - key: SIGNALFORGE_PUBLIC_URL
