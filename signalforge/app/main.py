@@ -400,7 +400,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 item = results.get(mint) or {}
                 change = item.get(field)
                 if isinstance(change, (int, float)):
-                    ranked.append({"asset_id": mint, "name": asset.get("token_name") or mint[:8], "image_url": asset.get("image_url"), "price_change_pct": change, "market_cap_usd": item.get("market_cap_usd"), "volume_24h_usd": item.get("volume_24h_usd"), "liquidity_usd": item.get("liquidity_usd")})
+                    ranked.append({"asset_id": mint, "name": asset.get("token_name") or mint[:8], "image_url": item.get("image_url") or asset.get("image_url"), "price_change_pct": change, "market_cap_usd": item.get("market_cap_usd"), "volume_24h_usd": item.get("volume_24h_usd"), "liquidity_usd": item.get("liquidity_usd")})
             trending[str(hours) + "h"] = sorted(ranked, key=lambda row: row["price_change_pct"], reverse=True)[:10]
         return {"market_data": results, "trending": trending, "source": "DexScreener",
             "trend_source": "DexScreener + locally observed price history", "note": "1h and 24h changes use DexScreener. 5h requires five hours of continuous local snapshots and resets when the API restarts. Rankings cover discovered assets only. Holder counts are not provided by this market-data endpoint."}
