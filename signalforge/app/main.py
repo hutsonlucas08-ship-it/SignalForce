@@ -49,7 +49,7 @@ class PaperMarkRequest(BaseModel):
 
 class PaperBotConfigRequest(BaseModel):
     enabled: Optional[bool] = None
-    allocated_capital_usd: Optional[float] = Field(default=None, ge=50, le=100000)
+    allocated_capital_usd: Optional[float] = Field(default=None, ge=5, le=100000000)
     duration_seconds: Optional[int] = None
 
 
