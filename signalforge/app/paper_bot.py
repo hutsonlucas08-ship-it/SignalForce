@@ -60,7 +60,7 @@ def _state(conn):
 
 
 def _set_status(conn, **values):
-    allowed = {"heartbeat_at", "last_scan_at", "last_error", "started_at", "run_started_at", "run_until", "run_stopped_at", "session_seconds"}
+    allowed = {"heartbeat_at", "last_scan_at", "last_error", "started_at", "run_started_at", "run_until", "run_stopped_at", "session_seconds", "last_scan_summary"}
     fields = [(k, v) for k, v in values.items() if k in allowed]
     if fields:
         conn.execute("UPDATE paper_bot_state SET " + ",".join(k+"=?" for k,_ in fields) + " WHERE id=1",
@@ -423,7 +423,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                                 _STALE_ALERTED[item["asset_id"]] = time.time()
                                 await _telegram_send(client, "SIGNALFORCE WARNING\nNo price for open paper position " + str(item.get("token_name") or item["asset_id"][:8]) + " for " + str(item["unpriced_seconds"] // 60) + "+ minutes. Its exit rules cannot run until a price returns.")
                         stale_note = ("No price for open position(s): " + ", ".join(str(item.get("token_name") or item["asset_id"][:8]) for item in stale))[:300] if stale else None
-                        _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=stale_note)
+                        _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=stale_note, last_scan_summary="Assets %d · prices %d · eligible %d · tracked-wallet signals %d · buys %d · sells %d" % (len(assets), len(pairs), outcome["candidate_count"], outcome["wallet_signal_count"], len(outcome["entries"]), len(outcome["exits"])))
                         log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d exits=%d",
                                  len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]), len(outcome["exits"]))
                     finally:
@@ -466,6 +466,7 @@ def bot_status(conn):
         "last_scan_at": state["last_scan_at"],
         "heartbeat_age_seconds": round(age,1) if age is not None else None,
         "last_error": state["last_error"],
+        "last_scan_summary": state.get("last_scan_summary"),
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
                         "min_buys_5m":MIN_BUYS_5M,"smart_money_lookback_minutes":SMART_MONEY_LOOKBACK_MINUTES,"minimum_distinct_wallet_buys":MIN_DISTINCT_WALLET_BUYS,"market_only_min_score":MARKET_ONLY_MIN_SCORE,"single_wallet_min_score":SINGLE_WALLET_MIN_MARKET_SCORE,"max_open_positions":MAX_OPEN_POSITIONS,"position_equity_fraction":POSITION_EQUITY_FRACTION,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":None},
