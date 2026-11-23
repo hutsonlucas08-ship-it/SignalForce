@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from . import store
 from .auth import Principal, RateLimiter, _fp, require_admin, require_read
-from .config import Settings, load_settings
+from .config import ConfigError, Settings, load_settings
 from .db import connect, run_migrations, utcnow
 from . import customer_auth, customer_data, customer_integrations, customer_email
 from .security import CredentialEncryptionError
@@ -116,6 +116,11 @@ class RiskScreenRequest(BaseModel):
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or load_settings()
+    if settings.database_url:
+        raise ConfigError(
+            "DATABASE_URL is set, but PostgreSQL support is not complete yet. "
+            "Refusing to start with SQLite so hosted customer data is not silently written to ephemeral storage."
+        )
     app = FastAPI(title="SignalForce", version=settings.version)
     app.state.settings = settings
     app.state.limiter = RateLimiter(settings.rate_limit_per_minute)
