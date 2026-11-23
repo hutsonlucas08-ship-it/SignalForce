@@ -112,7 +112,7 @@ def revoke_customer_session(conn: sqlite3.Connection, session_token: str) -> boo
 
 
 def register_customer_account(conn: sqlite3.Connection, email: str, password: str) -> str:
-    """Create a pending account; it cannot sign in until verified/activated."""
+    """Create an active beta account; email verification is not enabled yet."""
     import re
     import uuid
 
@@ -126,7 +126,7 @@ def register_customer_account(conn: sqlite3.Connection, email: str, password: st
     now = utcnow()
     try:
         conn.execute(
-            "INSERT INTO customer_accounts(id,email,password_hash,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)",
+            "INSERT INTO customer_accounts(id,email,password_hash,status,created_at,updated_at) VALUES(?,?,?,'active',?,?)",
             (account_id, normalized, password_hash, now, now),
         )
         conn.commit()
