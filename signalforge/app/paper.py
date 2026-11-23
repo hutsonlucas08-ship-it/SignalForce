@@ -152,11 +152,15 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
         trade_params = (account["id"], session_id)
         position_buy_filter = "account_id=? AND session_id=? AND side='buy'"
         position_buy_params = (account["id"], session_id)
+        position_filter = "account_id=? AND asset_id IN (SELECT DISTINCT asset_id FROM paper_trades WHERE " + position_buy_filter + ")"
+        position_params = (account["id"], *position_buy_params)
     else:
         trade_filter = "account_id=? AND created_at>=?"
         trade_params = (account["id"], session_started_at)
         position_buy_filter = "account_id=? AND created_at>=? AND side='buy'"
         position_buy_params = (account["id"], session_started_at)
+        position_filter = "account_id=? AND (opened_at>=? OR asset_id IN (SELECT DISTINCT asset_id FROM paper_trades WHERE " + position_buy_filter + "))"
+        position_params = (account["id"], session_started_at, *position_buy_params)
     trades = [dict(row) for row in conn.execute(
         """SELECT id, asset_id, token_name, side, quantity, reference_price, fill_price,
                   gross_usd, fee_usd, realized_pnl_usd, reason, created_at
@@ -171,14 +175,9 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
     positions = [dict(row) for row in conn.execute(
         """SELECT asset_id, token_name, quantity, avg_entry_price, last_price,
                   cost_basis, opened_at, updated_at
-           FROM paper_positions
-           WHERE account_id=? AND (
-               opened_at>=? OR asset_id IN (
-                   SELECT DISTINCT asset_id FROM paper_trades WHERE """ + position_buy_filter + """
-               )
-           )
+           FROM paper_positions WHERE """ + position_filter + """
            ORDER BY opened_at DESC""",
-        (account["id"], session_started_at, *position_buy_params),
+        position_params,
     ).fetchall()]
     unrealized = sum((float(p["last_price"]) - float(p["avg_entry_price"])) * float(p["quantity"])
                      for p in positions)
