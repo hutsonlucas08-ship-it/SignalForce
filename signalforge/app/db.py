@@ -111,9 +111,14 @@ class PostgresConnection:
     def execute(self, sql: str, parameters=()):
         import psycopg
 
+        begins_immediate = sql.strip().upper() == "BEGIN IMMEDIATE"
         query = _postgres_runtime_sql(sql)
         try:
-            if parameters:
+            if begins_immediate:
+                # _claim() calls this after committing its previous state read.
+                self.raw.commit()
+                cursor = self.raw.execute(query, prepare=False)
+            elif parameters:
                 cursor = self.raw.execute(query, tuple(parameters), prepare=False)
             else:
                 cursor = self.raw.execute(query, prepare=False)
