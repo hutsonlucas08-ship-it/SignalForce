@@ -119,7 +119,7 @@ def _score(pair):
         price = 0.0
     checks = [
         (price > 0, "No current price"),
-        (isinstance(liquidity, (int,float)) and liquidity >= MIN_LIQUIDITY_USD, "Liquidity below $15,000 or missing"),
+        (isinstance(liquidity, (int,float)) and liquidity >= MIN_LIQUIDITY_USD, "Liquidity below $5,000 or missing"),
         (isinstance(market_cap, (int,float)) and MIN_MARKET_CAP_USD <= market_cap <= MAX_MARKET_CAP_USD, "Outside configured market-cap range"),
         (isinstance(vol5, (int,float)) and vol5 >= MIN_VOLUME_5M_USD, "Five-minute volume too low or missing"),
         (isinstance(buys5, int) and buys5 >= MIN_BUYS_5M, "Not enough recent buy transactions"),
@@ -302,7 +302,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             result = paper.place_order(conn, "automatic", mint, names.get(mint) or (pair.get("baseToken") or {}).get("name"),
                                        "buy", per_trade, price,
                                        "Combined smart-money + momentum entry; score %.1f; %d tracked wallets bought in last %d minutes; market and launch-health filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES),
-                                       session_id=session_id)
+                                       session_id=session_id, max_position_fraction=POSITION_EQUITY_FRACTION, max_open_positions=MAX_OPEN_POSITIONS)
             position_track.forget(conn, mint)
             position_track.observe(conn, mint, result["fill_price"], price, _liquidity_usd(pair))
             entries.append({"asset_id": mint, "score": score, "market_score": market_score, "wallet_count": signal["wallet_count"], "buy_count": signal["buy_count"], "latest_buy_at": signal["latest_buy_at"], "trade_id": result["trade_id"]})
