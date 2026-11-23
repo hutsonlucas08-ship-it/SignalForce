@@ -207,13 +207,13 @@ def place_paper_trade(
     cursor = conn.execute(
         """INSERT INTO customer_paper_trades
            (paper_account_id,asset_id,token_name,side,quantity,price_usd,amount_usd,realized_pnl_usd,reason,created_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+           VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id""",
         (paper_account_id, asset_id.strip(), token_name, side, quantity, float(price_usd),
          float(amount_usd), realized, reason.strip(), now),
     )
     conn.commit()
     return {
-        "trade_id": cursor.lastrowid, "side": side, "asset_id": asset_id.strip(),
+        "trade_id": cursor.fetchone()["id"], "side": side, "asset_id": asset_id.strip(),
         "quantity": quantity, "price_usd": float(price_usd), "amount_usd": float(amount_usd),
         "realized_pnl_usd": realized, "cash_balance_usd": new_cash,
     }
