@@ -84,6 +84,14 @@ def _postgres_runtime_sql(sql: str) -> str:
         re.IGNORECASE,
     ):
         translated = translated.rstrip().rstrip(";") + " FOR UPDATE"
+    # Serialize customer paper trades on the owning account row so concurrent
+    # buys cannot both spend the same cash balance.
+    if re.match(
+        r"^\\s*SELECT\\s+id\\s*,\\s*cash_balance_usd\\s+FROM\\s+customer_paper_accounts\\s+WHERE\\s+id\\s*=\\s*%s\\s+AND\\s+account_id\\s*=\\s*%s\\s*;?\\s*$",
+        translated,
+        re.IGNORECASE,
+    ):
+        translated = translated.rstrip().rstrip(";") + " FOR UPDATE"
     return translated
 
 
