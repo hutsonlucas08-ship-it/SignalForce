@@ -17,7 +17,10 @@ from .research import scan_assets
 log = logging.getLogger("signalforge.paper_bot")
 OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
-INTERVAL_SECONDS = 3.0
+INTERVAL_SECONDS = 60.0
+SMART_MONEY_LOOKBACK_MINUTES = 15
+MIN_DISTINCT_WALLET_BUYS = 2
+SINGLE_WALLET_MIN_MARKET_SCORE = 75.0
 LEASE_SECONDS = 12.0
 MIN_LIQUIDITY_USD = 15000.0
 MIN_VOLUME_5M_USD = 3000.0
@@ -114,48 +117,6 @@ def _score(pair):
     return round(score, 2), None
 
 
-async def _pumpfun_discoveries(client):
-    """Fetch trending and newest callout mints when an approved Pump.fun key is configured."""
-    key = os.getenv("PUMPFUN_API_KEY")
-    if not key:
-        return [], {}
-    headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
-    requests = [
-        client.get("https://api.pump.fun/v1/home-feed",
-                   params={"pageSize": 50, "chain": "solana", "minMarketCapUsd": 10000,
-                           "maxMarketCapUsd": 5000000, "assetClasses": "coin"},
-                   headers=headers),
-        client.get("https://api.pump.fun/v1/home-feed/new",
-                   params={"pageSize": 50, "chain": "solana", "updatesLimit": 2},
-                   headers=headers),
-    ]
-    responses = await asyncio.gather(*requests, return_exceptions=True)
-    names = {}
-    mints = []
-    for response in responses:
-        if isinstance(response, Exception):
-            log.warning("Pump.fun discovery request failed: %s", type(response).__name__)
-            continue
-        try:
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError):
-            log.warning("Pump.fun discovery response unavailable")
-            continue
-        for coin in (payload.get("coins") or []) if isinstance(payload, dict) else []:
-            if not isinstance(coin, dict):
-                continue
-            mint = coin.get("coinMint")
-            if not isinstance(mint, str) or not mint:
-                continue
-            if coin.get("chain") not in (None, "solana"):
-                continue
-            if mint not in mints:
-                mints.append(mint)
-            names[mint] = coin.get("coinName") or coin.get("symbol") or mint[:8]
-    return mints, names
-
-
 async def _fetch_pairs(client, mints):
     async def one(batch):
         try:
@@ -182,6 +143,25 @@ async def _fetch_pairs(client, mints):
             if old is None or liq > old_liq:
                 out[mint] = pair
     return out
+
+
+def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUTES):
+    """Aggregate recent, ingested buys from active tracked wallets only."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = conn.execute(
+        """
+        SELECT e.mint, COUNT(*) AS buy_count,
+               COUNT(DISTINCT e.wallet_address) AS wallet_count,
+               MAX(e.occurred_at) AS latest_buy_at
+        FROM wallet_trade_events e
+        JOIN tracked_wallets w ON w.wallet_address=e.wallet_address
+        WHERE e.side='buy' AND e.occurred_at>=?
+          AND COALESCE(w.helius_status, 'active')='active'
+        GROUP BY e.mint
+        """,
+        (cutoff,),
+    ).fetchall()
+    return {row["mint"]: dict(row) for row in rows}
 
 
 def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None):
@@ -215,16 +195,25 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             except ValueError as exc:
                 log.warning("Paper exit blocked for %s: %s", mint[:8], exc)
 
-    # Never chase tokens without recent buyers, volume, liquidity and positive momentum.
+    # Combine recent tracked-wallet accumulation with independent market confirmation.
     candidates = []
     names = {a["asset_id"]: a.get("token_name") for a in assets}
     names.update(extra_names or {})
+    wallet_signals = _recent_wallet_buy_signals(conn)
     for mint, pair in pairs.items():
         if mint in positions or (approved_mints is not None and mint not in approved_mints):
             continue
-        score, reason = _score(pair)
-        if score is not None:
-            candidates.append((score, mint, pair))
+        market_score, reason = _score(pair)
+        signal = wallet_signals.get(mint)
+        if market_score is None or not signal:
+            continue
+        wallet_count = int(signal["wallet_count"])
+        # Two or more distinct tracked wallets is a strong copy signal.
+        # A single wallet is only eligible with an exceptionally strong market score.
+        if wallet_count < MIN_DISTINCT_WALLET_BUYS and market_score < SINGLE_WALLET_MIN_MARKET_SCORE:
+            continue
+        combined_score = min(100.0, market_score + min(wallet_count * 7.5, 20.0))
+        candidates.append((combined_score, mint, pair, signal, market_score))
     candidates.sort(reverse=True, key=lambda x: x[0])
 
     account = conn.execute("SELECT * FROM paper_accounts WHERE strategy='automatic'").fetchone()
@@ -234,7 +223,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
     count = conn.execute("SELECT COUNT(*) n FROM paper_positions WHERE account_id=?",(account["id"],)).fetchone()["n"]
     per_trade = min(equity * 0.05, account["cash_balance"])
     entries = []
-    for score, mint, pair in candidates:
+    for score, mint, pair, signal, market_score in candidates:
         if count >= 10 or per_trade < 10:
             break
         price = prices.get(mint)
@@ -244,13 +233,13 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
         try:
             result = paper.place_order(conn, "automatic", mint, names.get(mint) or (pair.get("baseToken") or {}).get("name"),
                                        "buy", per_trade, price,
-                                       "Automatic momentum entry; score %.1f; 5m buy/sell and liquidity filters passed" % score)
-            entries.append({"asset_id": mint, "score": score, "trade_id": result["trade_id"]})
+                                       "Combined smart-money + momentum entry; score %.1f; %d tracked wallets bought in last %d minutes; market and launch-health filters passed" % (score, signal["wallet_count"], SMART_MONEY_LOOKBACK_MINUTES))
+            entries.append({"asset_id": mint, "score": score, "market_score": market_score, "wallet_count": signal["wallet_count"], "buy_count": signal["buy_count"], "latest_buy_at": signal["latest_buy_at"], "trade_id": result["trade_id"]})
             count += 1
             break
         except ValueError as exc:
             log.info("Candidate skipped %s: %s", mint[:8], exc)
-    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits}
+    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits, "wallet_signal_count": len(wallet_signals)}
 
 
 async def _bubble_approved(client, mint):
@@ -327,15 +316,16 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                         await asyncio.sleep(INTERVAL_SECONDS)
                         continue
                     try:
-                        assets = scan_assets(conn, 50)
-                        mints = [a["asset_id"] for a in assets if a.get("asset_id")]
-                        pump_mints, pump_names = await _pumpfun_discoveries(client)
-                        for mint in pump_mints:
-                            if mint not in mints:
-                                mints.append(mint)
+                        assets = scan_assets(conn, 100)
+                        wallet_signals = _recent_wallet_buy_signals(conn)
+                        mints = list(dict.fromkeys(
+                            [a["asset_id"] for a in assets if a.get("asset_id")]
+                            + list(wallet_signals.keys())
+                            + [r["asset_id"] for r in conn.execute("SELECT asset_id FROM paper_positions WHERE account_id='paper-automatic'").fetchall()]
+                        ))[:150]
                         pairs = await _fetch_pairs(client, mints) if mints else {}
                         approved_mints = await _approved_candidates(client, pairs)
-                        outcome = _trade_decisions(conn, assets, pairs, pump_names, approved_mints)
+                        outcome = _trade_decisions(conn, assets, pairs, approved_mints=approved_mints)
                         for trade in outcome.get("entries", []):
                             pair = pairs.get(trade["asset_id"], {})
                             token = (pair.get("baseToken") or {}).get("name") or pump_names.get(trade["asset_id"]) or trade["asset_id"][:8]
@@ -386,8 +376,11 @@ def bot_status(conn):
         "scan_interval_seconds": INTERVAL_SECONDS,
         "entry_rules": {"min_liquidity_usd":MIN_LIQUIDITY_USD,"min_volume_5m_usd":MIN_VOLUME_5M_USD,
                         "min_buys_5m":MIN_BUYS_5M,"min_bubblemaps_health":70,"stop_loss_pct":STOP_LOSS_PCT,"take_profit_pct":TAKE_PROFIT_PCT},
-        "pumpfun_api_configured": bool(os.getenv("PUMPFUN_API_KEY")),
-        "note": "Paper simulation only. Discovery combines PumpPortal launches with Pump.fun trending and newest callouts when an approved API key is configured. New entries require strong BubbleMaps launch health; missing evidence is rejected. The scanner is not the full market and may make no trades."
+        "strategy": "combined_smart_money_momentum",
+        "smart_money_lookback_minutes": SMART_MONEY_LOOKBACK_MINUTES,
+        "minimum_distinct_wallet_buys": MIN_DISTINCT_WALLET_BUYS,
+        "single_wallet_market_score_threshold": SINGLE_WALLET_MIN_MARKET_SCORE,
+        "note": "Paper simulation only. Entries require recent buys from tracked wallets plus independent market activity, liquidity, momentum, and BubbleMaps launch-health approval. Pump.fun API is not used. Missing risk evidence is rejected; the scanner is not the full market and may make no trades."
     }
 
 
