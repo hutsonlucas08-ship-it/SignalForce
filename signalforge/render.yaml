@@ -3,6 +3,7 @@ services:
     name: signalforce
     runtime: docker
     plan: free
+    rootDir: ./signalforge
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
