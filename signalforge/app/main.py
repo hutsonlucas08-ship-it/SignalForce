@@ -87,6 +87,15 @@ class CustomerPaperAccountRequest(BaseModel):
     name: str = Field(default="Main Paper Account", min_length=1, max_length=80)
 
 
+class CustomerPaperTradeRequest(BaseModel):
+    asset_id: str = Field(min_length=1, max_length=128)
+    token_name: Optional[str] = Field(default=None, max_length=100)
+    side: str = Field(min_length=3, max_length=4)
+    amount_usd: float = Field(gt=0, le=10000000)
+    reference_price: float = Field(gt=0, le=1e15)
+    reason: str = Field(default="manual paper trade", min_length=1, max_length=200)
+
+
 class CustomerIntegrationRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=20)
     credentials: dict[str, str]
@@ -256,6 +265,31 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         try:
             return {"paper_account": customer_data.create_paper_account(
                 conn, session["account_id"], body.starting_capital_usd, body.name)}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.get("/v1/customer/paper-accounts/{paper_account_id}/positions")
+    def customer_paper_positions(paper_account_id: str, session=Depends(require_customer), conn=Depends(get_conn)):
+        try:
+            return {"positions": customer_data.list_paper_positions(conn, session["account_id"], paper_account_id)}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.get("/v1/customer/paper-accounts/{paper_account_id}/trades")
+    def customer_paper_trades(paper_account_id: str, limit: int = 100, session=Depends(require_customer), conn=Depends(get_conn)):
+        try:
+            return {"trades": customer_data.list_paper_trades(conn, session["account_id"], paper_account_id, limit)}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/v1/customer/paper-accounts/{paper_account_id}/trades", status_code=201)
+    def customer_place_paper_trade(paper_account_id: str, body: CustomerPaperTradeRequest,
+                                   session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            return {"trade": customer_data.place_paper_trade(
+                conn, session["account_id"], paper_account_id, asset_id=body.asset_id,
+                token_name=body.token_name, side=body.side, amount_usd=body.amount_usd,
+                price_usd=body.reference_price, reason=body.reason)}
         except customer_data.CustomerDataError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
