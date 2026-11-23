@@ -257,7 +257,7 @@ async def _bubble_approved(client, mint):
         score = launch.get("score")
         if launch.get("status") == "ok" and isinstance(score, (int,float)) and score >= 70:
             limits = {"sniperShare":0.35, "bundleShare":0.25, "devClusterShare":0.25, "top10Share":0.75}
-            approved = all(not isinstance(launch.get(field),(int,float)) or launch[field] <= ceiling
+            approved = all(isinstance(launch.get(field),(int,float)) and launch[field] <= ceiling
                            for field,ceiling in limits.items())
     except (httpx.HTTPError, ValueError, TypeError):
         approved = False
@@ -321,8 +321,8 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                         assets = scan_assets(conn, 100)
                         wallet_signals = _recent_wallet_buy_signals(conn)
                         mints = list(dict.fromkeys(
-                            [a["asset_id"] for a in assets if a.get("asset_id")]
-                            + list(wallet_signals.keys())
+                            list(wallet_signals.keys())
+                            + [a["asset_id"] for a in assets if a.get("asset_id")]
                             + [r["asset_id"] for r in conn.execute("SELECT asset_id FROM paper_positions WHERE account_id='paper-automatic'").fetchall()]
                         ))[:150]
                         pairs = await _fetch_pairs(client, mints) if mints else {}
