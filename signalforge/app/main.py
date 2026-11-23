@@ -431,9 +431,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return FileResponse(Path(__file__).parent / "static" / "customer.html")
 
     @app.get("/", include_in_schema=False)
-    def dashboard():
-        """Serve the SignalForge browser dashboard."""
-        return FileResponse(Path(__file__).parent / "static" / "index.html")
+    def customer_home():
+        """Public product entry point; operator controls are not served to customers."""
+        return FileResponse(Path(__file__).parent / "static" / "customer.html")
 
     @app.get("/health")
     def liveness():
