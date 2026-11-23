@@ -5,6 +5,7 @@ on:
     branches:
       - smart-money-tracker
       - signalforge-2.0
+      - postgresql-migration
   pull_request:
     branches:
       - smart-money-tracker
