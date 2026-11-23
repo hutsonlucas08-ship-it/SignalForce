@@ -25,7 +25,7 @@ async def sync_once(db_path: str, api_key: str, *, client=None, limit: int = 100
     conn = connect(db_path)
     totals = {"wallets_checked": 0, "wallets_succeeded": 0,
               "transactions_parsed": 0, "transactions_inserted": 0,
-              "duplicates": 0, "wallet_errors": 0}
+              "duplicates": 0, "wallet_errors": 0, "wallet_failures": []}
     try:
         store.register_source(conn, SOURCE_NAME, "helius_polling")
         wallets = conn.execute(
@@ -91,14 +91,43 @@ async def sync_once(db_path: str, api_key: str, *, client=None, limit: int = 100
                 else:
                     # Keep the old checkpoint so the next cycle resumes without silently skipping history.
                     totals["wallet_errors"] += 1
-                    log.warning("Helius polling page cap reached for wallet %s; checkpoint retained", wallet)
-            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                    failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}",
+                               "reason": "pagination_cap"}
+                    totals["wallet_failures"].append(failure)
+                    log.warning("Helius polling page cap reached for wallet %s; checkpoint retained", failure["wallet"])
+            except httpx.HTTPStatusError as exc:
                 totals["wallet_errors"] += 1
-                log.warning("Helius polling failed for wallet %s (%s)", wallet, type(exc).__name__)
+                failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}",
+                           "reason": f"http_{exc.response.status_code}"}
+                totals["wallet_failures"].append(failure)
+                log.warning("Helius polling failed for wallet %s (HTTP %s)",
+                            failure["wallet"], exc.response.status_code)
+            except httpx.TimeoutException:
+                totals["wallet_errors"] += 1
+                failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}", "reason": "timeout"}
+                totals["wallet_failures"].append(failure)
+                log.warning("Helius polling timed out for wallet %s", failure["wallet"])
+            except httpx.RequestError as exc:
+                totals["wallet_errors"] += 1
+                failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}", "reason": "connection_error"}
+                totals["wallet_failures"].append(failure)
+                log.warning("Helius polling connection error for wallet %s (%s)",
+                            failure["wallet"], type(exc).__name__)
+            except (ValueError, TypeError):
+                totals["wallet_errors"] += 1
+                failure = {"wallet": f"{wallet[:6]}…{wallet[-4:]}", "reason": "invalid_response"}
+                totals["wallet_failures"].append(failure)
+                log.warning("Helius returned an invalid response for wallet %s", failure["wallet"])
         if totals["wallet_errors"]:
+            details = ", ".join(
+                f"{item['wallet']}={item['reason']}" for item in totals["wallet_failures"][:5]
+            )
+            remaining = totals["wallet_errors"] - min(5, totals["wallet_errors"])
+            if remaining:
+                details += f", +{remaining} more"
             store.record_source_failure(
                 conn, SOURCE_NAME,
-                f"{totals['wallet_errors']} of {totals['wallets_checked']} wallet requests failed",
+                f"{totals['wallet_errors']} of {totals['wallets_checked']} wallet requests failed ({details})",
             )
         else:
             store.record_source_success(conn, SOURCE_NAME)
