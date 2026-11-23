@@ -19,6 +19,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
+_GECKO_LAUNCH_CACHE = (0.0, [])
 _STALE_ALERTED = {}
 INTERVAL_SECONDS = 30.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
@@ -155,15 +156,80 @@ async def _fetch_pairs(client, mints):
         for pair in group:
             if not isinstance(pair, dict) or pair.get("chainId") != "solana":
                 continue
-            mint = (pair.get("baseToken") or {}).get("address")
-            if mint not in mints:
+            base_address = (pair.get("baseToken") or {}).get("address")
+            quote_address = (pair.get("quoteToken") or {}).get("address")
+            mint = base_address if base_address in mints else quote_address if quote_address in mints else None
+            if mint is None:
                 continue
+            normalized = dict(pair)
+            if mint == quote_address and mint != base_address:
+                # DexScreener's priceUsd belongs to baseToken. Convert it to the
+                # requested quote token's USD price rather than mislabeling it.
+                try:
+                    base_usd = float(pair.get("priceUsd"))
+                    base_in_quote = float(pair.get("priceNative"))
+                    normalized["priceUsd"] = str(base_usd / base_in_quote) if base_usd > 0 and base_in_quote > 0 else None
+                except (TypeError, ValueError):
+                    normalized["priceUsd"] = None
+                normalized["baseToken"], normalized["quoteToken"] = pair.get("quoteToken"), pair.get("baseToken")
+                normalized["marketCap"] = None
+                normalized["fdv"] = None
             old = out.get(mint)
-            liq = ((pair.get("liquidity") or {}).get("usd") or 0)
+            liq = ((normalized.get("liquidity") or {}).get("usd") or 0)
             old_liq = (((old or {}).get("liquidity") or {}).get("usd") or 0)
             if old is None or liq > old_liq:
-                out[mint] = pair
+                out[mint] = normalized
     return out
+
+
+async def _fetch_gecko_new_launches(client):
+    """Fetch/cache GeckoTerminal's newest Solana pools as extra bot candidates."""
+    global _GECKO_LAUNCH_CACHE
+    now = time.time()
+    cached_at, cached = _GECKO_LAUNCH_CACHE
+    if now - cached_at < 45:
+        return list(cached)
+    try:
+        response = await client.get(
+            "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
+            params={"include": "base_token,quote_token,dex", "page": 1},
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        included = {
+            item.get("id"): item.get("attributes") or {}
+            for item in (payload.get("included") or [])
+            if isinstance(item, dict) and item.get("type") == "token"
+        }
+        stable = {
+            "So11111111111111111111111111111111111111112",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        }
+        launches = []
+        for pool in payload.get("data") or []:
+            if not isinstance(pool, dict):
+                continue
+            rel = pool.get("relationships") or {}
+            base_ref = ((rel.get("base_token") or {}).get("data") or {})
+            quote_ref = ((rel.get("quote_token") or {}).get("data") or {})
+            base = included.get(base_ref.get("id"), {})
+            quote = included.get(quote_ref.get("id"), {})
+            token = quote if base.get("address") in stable else base
+            mint = token.get("address")
+            if not isinstance(mint, str) or not mint:
+                continue
+            launches.append({"asset_id": mint, "token_name": token.get("name") or token.get("symbol") or mint[:8]})
+        unique = {}
+        for item in launches:
+            unique.setdefault(item["asset_id"], item)
+        result = list(unique.values())[:30]
+        _GECKO_LAUNCH_CACHE = (now, result)
+        return list(result)
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        log.warning("Paper bot GeckoTerminal discovery request failed")
+        return list(cached)
 
 
 def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUTES):
@@ -263,6 +329,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
 
     # Combine recent tracked-wallet accumulation with independent market confirmation.
     candidates = []
+    rejection_reasons = {}
     names = {a["asset_id"]: a.get("token_name") for a in assets}
     names.update(extra_names or {})
     wallet_signals = _recent_wallet_buy_signals(conn)
@@ -272,13 +339,19 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
         market_score, reason = _score(pair)
         signal = wallet_signals.get(mint)
         if market_score is None:
+            label = reason or "Unknown market-data rejection"
+            rejection_reasons[label] = rejection_reasons.get(label, 0) + 1
             continue
         wallet_count = int(signal["wallet_count"]) if signal else 0
         # Aggressive paper mode: one tracked-wallet buy is confirmation; strong
         # momentum setups may qualify even without a tracked-wallet signal.
         if wallet_count == 0 and market_score < MARKET_ONLY_MIN_SCORE:
+            label = "Market score below market-only threshold"
+            rejection_reasons[label] = rejection_reasons.get(label, 0) + 1
             continue
         if wallet_count > 0 and market_score < SINGLE_WALLET_MIN_MARKET_SCORE:
+            label = "Market score below one-wallet threshold"
+            rejection_reasons[label] = rejection_reasons.get(label, 0) + 1
             continue
         combined_score = min(100.0, market_score + min(wallet_count * 10.0, 25.0))
         candidates.append((combined_score, mint, pair, signal or {"wallet_count": 0, "buy_count": 0, "latest_buy_at": None}, market_score))
@@ -310,7 +383,7 @@ def _trade_decisions(conn, assets, pairs, extra_names=None, approved_mints=None)
             break
         except ValueError as exc:
             log.info("Candidate skipped %s: %s", mint[:8], exc)
-    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits, "stale_positions": stale, "wallet_signal_count": len(wallet_signals)}
+    return {"prices": prices, "candidate_count": len(candidates), "entries": entries, "exits": exits, "stale_positions": stale, "wallet_signal_count": len(wallet_signals), "rejection_reasons": rejection_reasons}
 
 
 async def _bubble_approved(client, mint):
@@ -397,6 +470,7 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                         continue
                     try:
                         assets = scan_assets(conn, 100)
+                        gecko_launches = await _fetch_gecko_new_launches(client)
                         wallet_signals = _recent_wallet_buy_signals(conn)
                         # Always reserve room for open positions so they continue to be re-priced.
                         held = _held_mints(conn)
@@ -404,11 +478,15 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                             held
                             + list(wallet_signals.keys())
                             + [a["asset_id"] for a in assets if a.get("asset_id")]
-                        ))[:150]
+                            + [a["asset_id"] for a in gecko_launches if a.get("asset_id")]
+                        ))[:180]
                         pairs = await _fetch_pairs(client, mints) if mints else {}
+                        extra_names = {a["asset_id"]: a.get("token_name") for a in gecko_launches if a.get("asset_id")}
+                        known_mints = {a.get("asset_id") for a in assets}
+                        assets.extend({"asset_id": mint, "token_name": name} for mint, name in extra_names.items() if mint not in known_mints)
                         # Aggressive paper mode uses market and momentum confirmation;
                         # BubbleMaps launch data remains a research signal, not a hard gate.
-                        outcome = _trade_decisions(conn, assets, pairs)
+                        outcome = _trade_decisions(conn, assets, pairs, extra_names=extra_names)
                         for trade in outcome.get("entries", []):
                             pair = pairs.get(trade["asset_id"], {})
                             token = (pair.get("baseToken") or {}).get("name") or trade["asset_id"][:8]
@@ -423,7 +501,9 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                                 _STALE_ALERTED[item["asset_id"]] = time.time()
                                 await _telegram_send(client, "SIGNALFORCE WARNING\nNo price for open paper position " + str(item.get("token_name") or item["asset_id"][:8]) + " for " + str(item["unpriced_seconds"] // 60) + "+ minutes. Its exit rules cannot run until a price returns.")
                         stale_note = ("No price for open position(s): " + ", ".join(str(item.get("token_name") or item["asset_id"][:8]) for item in stale))[:300] if stale else None
-                        _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=stale_note, last_scan_summary="Assets %d · prices %d · eligible %d · tracked-wallet signals %d · buys %d · sells %d" % (len(assets), len(pairs), outcome["candidate_count"], outcome["wallet_signal_count"], len(outcome["entries"]), len(outcome["exits"])))
+                        top_rejections = sorted(outcome.get("rejection_reasons", {}).items(), key=lambda item: item[1], reverse=True)[:2]
+                        rejection_note = "; ".join("%s: %d" % item for item in top_rejections) or "no market rejections"
+                        _set_status(conn, last_scan_at=utcnow(), heartbeat_at=utcnow(), last_error=stale_note, last_scan_summary="Assets %d (+%d new) · prices %d · eligible %d · wallet signals %d · buys %d · sells %d · rejects: %s" % (len(assets), len(gecko_launches), len(pairs), outcome["candidate_count"], outcome["wallet_signal_count"], len(outcome["entries"]), len(outcome["exits"]), rejection_note[:180]))
                         log.info("Paper bot scan: assets=%d priced=%d eligible=%d entries=%d exits=%d",
                                  len(assets), len(pairs), outcome["candidate_count"], len(outcome["entries"]), len(outcome["exits"]))
                     finally:
