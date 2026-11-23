@@ -84,6 +84,19 @@ def test_paper_capital_can_be_changed_after_closed_historical_trades():
     assert conn.execute("SELECT COUNT(*) n FROM paper_trades").fetchone()["n"] == 2
 
 
+def test_session_overview_reports_combined_session_profit():
+    from app import paper
+    conn = connect(":memory:")
+    run_migrations(conn)
+    status = configure_bot(conn, enabled=True, allocated_capital_usd=500, duration_seconds=900)
+    state = conn.execute("SELECT run_started_at,run_session_id FROM paper_bot_state WHERE id=1").fetchone()
+    paper.place_order(conn, "automatic", "ProfitMint111111111111111111111111111", "Profit Coin", "buy", 100, 1.0, "test entry", session_id=state["run_session_id"], max_position_fraction=1.0)
+    paper.mark_positions(conn, {"ProfitMint111111111111111111111111111": 1.5})
+    overview = paper.session_overview(conn, state["run_started_at"], None, True, state["run_session_id"])
+    assert overview["session_profit_usd"] == round(overview["realized_pnl_usd"] + overview["unrealized_pnl_usd"], 2)
+    assert overview["invested_usd"] > 0
+
+
 from datetime import datetime, timezone
 from app.paper_bot import _recent_wallet_buy_signals, _trade_decisions
 
