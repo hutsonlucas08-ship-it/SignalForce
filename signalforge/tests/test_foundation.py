@@ -281,3 +281,45 @@ def test_paper_sell_records_realized_result_and_never_live_mode():
     assert result.status_code == 200
     assert result.json()["realized_pnl_usd"] > 0
     assert result.json()["mode"] == "paper"
+
+
+def test_viewing_wallet_activity_does_not_advance_ingestion_checkpoint(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return [{
+                "signature": "view-only-signature",
+                "timestamp": 1790000000,
+                "description": "swap",
+                "type": "SWAP",
+                "source": "JUPITER",
+                "tokenTransfers": [],
+                "nativeTransfers": [],
+            }]
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setenv("HELIUS_API_KEY", "test-key")
+    monkeypatch.setattr("app.main.httpx.AsyncClient", FakeAsyncClient)
+    c, _ = make_client()
+    assert c.post("/v1/copytraders/wallets", headers=h(READ),
+                  json={"wallet_address": "11111111111111111111111111111111"}).status_code == 200
+
+    response = c.get(
+        "/v1/copytraders/activity?wallet=11111111111111111111111111111111",
+        headers=h(READ),
+    )
+    assert response.status_code == 200
+    assert response.json()["transactions"][0]["signature"] == "view-only-signature"
+
+    wallets = c.get("/v1/copytraders/wallets", headers=h(READ)).json()["wallets"]
+    assert wallets[0]["last_signature"] is None
