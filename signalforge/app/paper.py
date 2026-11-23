@@ -142,7 +142,7 @@ def session_overview(conn, session_started_at, session_stopped_at=None, active=F
     try:
         started = datetime.fromisoformat(session_started_at.replace("Z", "+00:00"))
         ended = (datetime.fromisoformat(session_stopped_at.replace("Z", "+00:00"))
-                 if session_stopped_at else datetime.now(timezone.utc))
+                 if session_stopped_at else (datetime.now(timezone.utc) if active else started))
         runtime_seconds = max(0, int((ended - started).total_seconds()))
     except (TypeError, ValueError):
         runtime_seconds = 0
