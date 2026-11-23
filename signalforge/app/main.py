@@ -692,8 +692,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                              "native_transfers":x.get("nativeTransfers") or []} for x in rows]
             return {"configured":True,"wallet":wallet,"transactions":transactions,
                     "note":"Parsed public on-chain swap history. This is not a verified profit leaderboard; token price history and complete position accounting are required before ranking wallet performance."}
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            raise HTTPException(
+                status_code=502,
+                detail=f"Helius returned HTTP {status} while fetching wallet history.",
+            )
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=502, detail="Helius wallet history request timed out.")
         except httpx.HTTPError:
-            raise HTTPException(status_code=502, detail="Helius wallet history is temporarily unavailable")
+            raise HTTPException(status_code=502, detail="Could not connect to Helius wallet history.")
 
     @app.get("/v1/smart-money/overlap")
     def smart_money_overlap(
