@@ -18,12 +18,11 @@ from app.sources.pumpportal import MAX_MESSAGE_SIZE
 SOURCE_NAME = "pumpportal"
 DEFAULT_WS_URL = "wss://pumpportal.fun/api/data"
 logger = logging.getLogger(__name__)
-_SECRET_RE = re.compile(r"(?i)(api[-_]?key=)[^&\s'"]+")
+_SECRET_RE = re.compile(r"(?i)(api[-_]?key=)[^&\s'\"]+")
 
 
 def redact_secrets(text: str) -> str:
     return _SECRET_RE.sub(r"\1[redacted]", text)
-    return _SECRET_RE.sub(r"\\1[redacted]", text)
 
 
 async def _wait_backoff(stop_event: asyncio.Event, seconds: float) -> None:
