@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import sqlite3
 import uuid
-from pathlib import Path
 
 import psycopg
 from psycopg import sql
@@ -25,7 +24,7 @@ from app.customer_integrations import (
     get_customer_integration_status, load_customer_integration, save_customer_integration,
 )
 from cryptography.fernet import Fernet
-from app.db import connect, run_migrations, utcnow
+from app.db import PostgresConnection, connect, run_migrations, utcnow
 from scripts.migrate_sqlite_to_postgres import (
     clear_migration_seed_rows, copy_data, source_inventory,
 )
