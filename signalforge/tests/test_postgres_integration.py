@@ -1,5 +1,7 @@
 """Real PostgreSQL smoke tests. CI supplies SIGNALFORGE_TEST_DATABASE_URL."""
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import sqlite3
 import uuid
 
@@ -12,8 +14,8 @@ from app.customer_auth import (
     create_customer_session, create_email_verification_token, register_customer_account,
 )
 from app.customer_data import (
-    add_wallet, create_paper_account, list_paper_positions, list_paper_trades,
-    list_wallets, place_paper_trade,
+    CustomerDataError, add_wallet, create_paper_account, list_paper_positions,
+    list_paper_trades, list_wallets, place_paper_trade,
 )
 from app.customer_integrations import (
     get_customer_integration_status, load_customer_integration, save_customer_integration,
@@ -287,3 +289,41 @@ def test_postgres_customer_registration_and_signin_routes(monkeypatch):
         )
         assert disconnected.status_code == 200
         assert disconnected.json()["disconnected"] is True
+
+
+
+def test_postgres_concurrent_paper_buys_cannot_overspend_same_account(postgres_connection):
+    conn = postgres_connection
+    email = uuid.uuid4().hex + "@concurrency.test"
+    account_id = register_customer_account(conn, email, "correct horse battery staple")
+    token = create_email_verification_token(conn, account_id)
+    assert consume_email_verification_token(conn, token)
+    paper = create_paper_account(conn, account_id, 50, "Concurrent spend test")
+    barrier = Barrier(2)
+
+    def attempt_buy():
+        worker_conn = connect(":memory:", DATABASE_URL)
+        try:
+            barrier.wait(timeout=10)
+            try:
+                place_paper_trade(
+                    worker_conn, account_id, paper["id"], asset_id="race-mint",
+                    side="buy", amount_usd=40, price_usd=1,
+                )
+                return "filled"
+            except CustomerDataError:
+                worker_conn.rollback()
+                return "rejected"
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: attempt_buy(), range(2)))
+
+    assert sorted(outcomes) == ["filled", "rejected"]
+    final = conn.execute(
+        "SELECT cash_balance_usd FROM customer_paper_accounts WHERE id=?",
+        (paper["id"],),
+    ).fetchone()
+    assert final["cash_balance_usd"] == 10
+    assert len(list_paper_trades(conn, account_id, paper["id"])) == 1
