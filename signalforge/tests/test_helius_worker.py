@@ -100,3 +100,45 @@ def test_sync_once_with_empty_watchlist_is_healthy(tmp_path):
         assert result["wallets_checked"] == 0
         assert result["wallet_errors"] == 0
     asyncio.run(run())
+
+
+
+def test_sync_once_paginates_until_previous_checkpoint(tmp_path):
+    async def run():
+        db = tmp_path / "pages.db"
+        setup_db(db)
+        conn = connect(str(db))
+        conn.execute("UPDATE tracked_wallets SET last_signature=? WHERE wallet_address=?",
+                     ("old-checkpoint", WALLET))
+        conn.commit()
+        conn.close()
+
+        newest = {"signature": "newest", "timestamp": 1790000002,
+                  "tokenTransfers": [{"mint": MINT, "tokenAmount": 3,
+                                      "fromUserAccount": "pool", "toUserAccount": WALLET}]}
+        middle = {"signature": "middle", "timestamp": 1790000001,
+                  "tokenTransfers": [{"mint": MINT, "tokenAmount": 2,
+                                      "fromUserAccount": "pool", "toUserAccount": WALLET}]}
+        checkpoint = {"signature": "old-checkpoint", "timestamp": 1790000000,
+                      "tokenTransfers": [{"mint": MINT, "tokenAmount": 1,
+                                          "fromUserAccount": "pool", "toUserAccount": WALLET}]}
+
+        class PagedHelius:
+            def __init__(self):
+                self.calls = []
+            async def get(self, url, params):
+                self.calls.append(dict(params))
+                payload = [newest, middle, checkpoint] if "before-signature" not in params else []
+                return httpx.Response(200, request=httpx.Request("GET", url), json=payload)
+
+        fake = PagedHelius()
+        result = await sync_once(str(db), "test-key", client=fake, limit=2)
+        assert result["transactions_inserted"] == 2
+        assert result["wallet_errors"] == 0
+        assert len(fake.calls) == 2
+        assert fake.calls[1]["before-signature"] == "middle"
+        conn = connect(str(db))
+        assert conn.execute("SELECT last_signature FROM tracked_wallets").fetchone()[0] == "newest"
+        assert conn.execute("SELECT COUNT(*) FROM wallet_trade_events").fetchone()[0] == 2
+        conn.close()
+    asyncio.run(run())
