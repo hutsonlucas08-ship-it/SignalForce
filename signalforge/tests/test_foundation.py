@@ -126,7 +126,6 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "003_paper_bot.sql",
         "004_timed_paper_sessions.sql",
         "005_tracked_wallets.sql",
-        "006_position_tracking.sql",
         "006_smart_money.sql",
         "007_wallet_quarantine.sql",
     ]
@@ -310,14 +309,10 @@ def test_geckoterminal_new_launches_requires_read_auth():
     assert c.get("/v1/research/new-launches").status_code == 401
 
 
-def test_trending_now_uses_local_tokens_and_dexscreener_only(monkeypatch):
-    from app import main, paper_bot
+def test_trending_now_uses_local_tokens_and_dexscreener_only():
     c, _ = make_client()
-    # Empty local discovery is an honest empty state and does not call Pump.fun.
-    monkeypatch.setattr(
-        paper_bot, "_pumpfun_discoveries",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Pump.fun must not be called")),
-    )
+    # The research endpoint uses its current local/DexScreener sources; the
+    # removed Pump.fun discovery helper is intentionally not part of the bot.
     response = c.get("/v1/research/trending-now", headers=h(READ))
     assert response.status_code == 200
     assert response.json()["candidates"] == []
