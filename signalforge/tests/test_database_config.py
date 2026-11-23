@@ -4,6 +4,7 @@ from app.config import ConfigError, load_settings
 
 
 def test_database_url_is_optional_and_defaults_to_local_sqlite(monkeypatch):
+    monkeypatch.delenv("RENDER_SERVICE_ID", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("SIGNALFORGE_READ_KEYS", "")
     monkeypatch.setenv("SIGNALFORGE_ADMIN_KEYS", "")
