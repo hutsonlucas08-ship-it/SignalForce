@@ -59,3 +59,36 @@ def test_fomo_snapshot_rejects_credentials_and_unknown_snapshot_types():
         "snapshot_type": "balances", "payload": {}
     })
     assert unknown.status_code == 422
+
+
+
+def test_local_bridge_pairing_is_one_time_and_bridge_key_is_tenant_scoped():
+    owner, other = _client(), _client()
+    csrf = _signed_in(owner, "bridge-owner@example.test")
+    _signed_in(other, "bridge-other@example.test")
+    generated = owner.post("/v1/customer/fomo-copilot/pairing",
+                           headers={"X-CSRF-Token": csrf}, json={})
+    assert generated.status_code == 200
+    code = generated.json()["pairing_code"]
+
+    paired = owner.post("/v1/customer/fomo-copilot/pair", json={"pairing_code": code})
+    assert paired.status_code == 200
+    bridge_key = paired.json()["bridge_key"]
+    assert bridge_key
+    assert bridge_key not in paired.text or len(bridge_key) > 20
+
+    reused = owner.post("/v1/customer/fomo-copilot/pair", json={"pairing_code": code})
+    assert reused.status_code == 401
+
+    payload = {"swaps": [{"id": "bridge-swap", "inTokenAddress": "mint-a"}]}
+    saved = owner.post("/v1/customer/fomo-copilot/bridge-snapshot",
+                       headers={"X-Fomo-Bridge-Key": bridge_key},
+                       json={"snapshot_type": "spot_swaps", "payload": payload})
+    assert saved.status_code == 200
+    assert owner.get("/v1/customer/fomo-copilot").json()["connected"] is True
+    assert other.get("/v1/customer/fomo-copilot").json()["connected"] is False
+
+    denied = other.post("/v1/customer/fomo-copilot/bridge-snapshot",
+                        headers={"X-Fomo-Bridge-Key": "not-the-owner-key"},
+                        json={"snapshot_type": "spot_swaps", "payload": payload})
+    assert denied.status_code == 401
