@@ -499,13 +499,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/v1/customer/fomo-copilot/pair")
     def customer_fomo_copilot_pair(body: CustomerFomoPairRequest, conn=Depends(get_conn)):
         now = utcnow()
-        row = conn.execute(
-            "SELECT account_id, pairing_hash, pairing_expires_at FROM customer_fomo_bridge_pairs"
-        ).fetchall()
         supplied_hash = hashlib.sha256(body.pairing_code.encode()).hexdigest()
-        matched = next((item for item in row
-                        if item["pairing_expires_at"] > now
-                        and hmac.compare_digest(item["pairing_hash"], supplied_hash)), None)
+        matched = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE pairing_hash=? AND pairing_expires_at>?",
+            (supplied_hash, now),
+        ).fetchone()
         if not matched:
             raise HTTPException(status_code=401, detail="Pairing code is invalid or expired. Generate a new code in SignalForce.")
         bridge_key = secrets.token_urlsafe(32)
