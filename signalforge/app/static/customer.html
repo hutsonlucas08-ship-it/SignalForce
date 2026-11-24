@@ -99,7 +99,7 @@ td{color:#dce7ed}
  <section class="card wide hidden" id="fomoCopilotPanel" style="margin-top:16px">
   <div class="head">
    <div><div class="eyebrow">FOMO MARKET INTELLIGENCE</div><h2>FOMO Copilot</h2>
-   <p>Manual callouts combine fresh Solana market observations with your own FOMO activity as context. Individual whale performance is not yet verified. You execute trades yourself.</p><p class="small">To import trader rankings, keep the local bridge running and open FOMO → Leaderboard → Traders in the same Chrome window. Switch through 24h, 7d and 30d so SignalForce can compare all three windows. The bridge passively reads the leaderboard response; it never clicks or places trades.</p></div>
+   <p>Live public FOMO trader activity, independent Solana market checks, and optional private snapshots from your local FOMO bridge. You execute trades yourself.</p><p class="small">The public Copy.top leaderboard, live tape and confluence alerts load automatically. The local bridge is optional: it imports your own FOMO activity and passively captures FOMO leaderboard windows. To use it, keep the bridge running and open FOMO → Leaderboard → Traders in the same Chrome window; switch through 24h, 7d and 30d. It never clicks or places trades.</p></div>
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
   <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. The 0–100 score is a rule-based screening score, not a win probability. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
@@ -117,8 +117,8 @@ td{color:#dce7ed}
   <div class="card" style="margin:12px 0"><div class="eyebrow">FOMO TRADER QUALIFICATION</div><h3 style="font-size:14px;margin:6px 0">Leaderboard-qualified traders</h3><p class="small">Strict filters: present in at least two leaderboard windows, 55%+ win rate, 20+ trades in 7d, median hold of 15+ minutes, and no more than 40% of 7d P&amp;L from one token. Missing data never passes.</p><div id="whaleCandidates" class="launch-grid"><div class="empty">Waiting for FOMO leaderboard data.</div></div><p class="small">These are FOMO leaderboard filters, not independently chain-verified trader performance. No trader is treated as a whale signal until the evidence is validated.</p></div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">YOUR TELEGRAM BOT</div><h3 style="font-size:14px;margin:6px 0">Get callout alerts on your phone</h3><p class="small">Create a bot with Telegram's @BotFather, paste its token here, then open your bot and press Start. Your token is encrypted for your account and is never shown again.</p><div class="field"><label>Your Telegram bot token</label><input id="calloutTelegramToken" type="password" autocomplete="off" placeholder="Paste your own bot token"></div><div class="actions"><button class="btn" id="saveCalloutTelegram" type="button">Save bot token</button><button class="btn" id="discoverCalloutTelegram" type="button">Find my chat</button><button class="btn" id="testCalloutTelegram" type="button">Test connection</button><button class="btn primary" id="sendCalloutTelegram" type="button">Send top callouts</button></div><div id="calloutTelegramStatus" class="small" style="margin-top:8px">Telegram is optional. Connect your own bot to receive alerts.</div></div>
   <div class="actions" style="margin-bottom:12px">
-   <button class="btn primary" id="generateFomoPairing" type="button">Generate pairing code</button><button class="btn" id="refreshFomo" type="button">Refresh FOMO data</button>
-   <button class="btn" id="disconnectFomo" type="button">Disconnect &amp; clear data</button>
+   <button class="btn primary" id="generateFomoPairing" type="button">Generate pairing code</button><button class="btn" id="refreshFomo" type="button">Refresh local FOMO data</button>
+   <button class="btn" id="disconnectFomo" type="button">Disconnect local bridge &amp; clear imports</button>
   </div>
   <div id="fomoConnectionStatus" class="message">Checking FOMO Copilot connection…</div><div id="fomoPairingCode" class="card hidden" style="margin-bottom:12px"><strong>One-time pairing code · expires in 5 minutes</strong><p class="mono" id="fomoPairingCodeValue" style="font-size:18px;letter-spacing:1px"></p><p class="small">Paste this into the local bridge when Terminal prompts you. Do not send it to anyone.</p></div>
   <div class="grid" style="margin-top:12px">
@@ -136,7 +136,7 @@ td{color:#dce7ed}
    </div>
    <div class="card">
     <div class="eyebrow">WHAT IT READS</div><h3 style="font-size:14px;margin:6px 0">FOMO data sources</h3>
-    <p class="small">Spot swap history, clan leaderboards, and passively captured individual trader leaderboard JSON (24h, 7d, 30d). Only traders meeting every configured evidence threshold are polled for recent spot swaps. Their buys are candidate context, not independently chain-verified proof. Cross-chain and off-platform swaps are excluded from qualified-trader buy observations.</p>
+    <p class="small">Public Copy.top feed: FOMO leaderboard, recent trades from those FOMO handles, hot-coin aggregates, confluence and big-trade alerts. Hot-coin aggregates may include other platforms unless labeled FOMO. Optional local bridge: your spot swap history, clan leaderboards, and passively captured individual trader leaderboard JSON (24h, 7d, 30d). Only locally qualified traders are polled for recent spot swaps. Those buys are context, not independently chain-verified proof.</p>
     <p class="small">SignalForce stores only account-scoped sanitized snapshots. The bridge never clicks trade buttons, submits orders, signs transactions, or accesses wallet private keys.</p>
    </div>
   </div>
@@ -268,7 +268,7 @@ async function loadFomoCopilot(){
   const data=await request("/v1/customer/fomo-copilot");
   status.textContent=data.connected
    ?"CONNECTED · "+data.snapshot_count+" FOMO feeds received · "+(data.bridge_paired?"local bridge paired":"bridge key not paired")+" · Read-only / manual execution"
-   :(data.bridge_paired?"BRIDGE PAIRED · Waiting for the first FOMO snapshot.":"NOT CONNECTED · Start the local Node bridge below.");
+   :(data.bridge_paired?"LOCAL BRIDGE PAIRED · Waiting for your first private FOMO snapshot.":"LOCAL BRIDGE NOT CONNECTED · Public Copy.top intelligence below is still available.");
   status.classList.toggle("error",false);
   const snapshots=data.snapshots||[];
   await loadFomoCallouts();
