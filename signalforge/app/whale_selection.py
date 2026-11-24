@@ -5,6 +5,8 @@ on-chain-verified whale identity. It never creates orders or trade instructions.
 """
 from __future__ import annotations
 
+import math
+
 
 def _number(value):
     if isinstance(value, bool) or value is None:
@@ -14,7 +16,8 @@ def _number(value):
             value = value.strip().replace(",", "")
             if value.endswith("%"):
                 return float(value[:-1]) / 100.0
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -116,13 +119,13 @@ def qualify_traders(snapshots, *, limit=25):
             }
             if pnl is None or pnl <= 0:
                 reasons.append("non_positive_or_missing_7d_pnl")
-            if win_rate is None or win_rate < 0.55:
+            if win_rate is None or not 0 <= win_rate <= 1 or win_rate < 0.55:
                 reasons.append("win_rate_below_55pct_or_missing")
             if trades is None or trades < 20:
                 reasons.append("fewer_than_20_7d_trades_or_missing")
             if hold_minutes is None or hold_minutes < 15:
                 reasons.append("median_hold_under_15m_or_missing")
-            if concentration is None or concentration > 0.40:
+            if concentration is None or concentration < 0 or concentration > 0.40:
                 reasons.append("single_token_pnl_concentration_over_40pct_or_missing")
         if reasons:
             rejected.append({"user_id": user_id, "handle": item["handle"], "reasons": reasons})
