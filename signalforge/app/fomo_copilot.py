@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 ALLOWED_TYPES = {"spot_swaps", "clans_24h", "clans_7d", "clans_30d"}
 MAX_SNAPSHOT_BYTES = 500_000
 BLOCKED_KEYS = {
-    "authorization", "cookie", "set-cookie", "access_token", "refresh_token",
-    "session_token", "session_id", "private_key", "secret", "password",
-    "seed", "seed_phrase", "mnemonic",
+    "authorization", "cookie", "setcookie", "accesstoken", "refreshtoken",
+    "sessiontoken", "sessionid", "apikey", "privatekey", "secret", "password",
+    "seed", "seedphrase", "mnemonic", "csrftoken",
 }
 
 
@@ -22,8 +22,9 @@ class FomoSnapshotError(ValueError):
 def _check_no_secrets(value, path="payload"):
     if isinstance(value, dict):
         for key, child in value.items():
-            normalized = str(key).strip().lower().replace("-", "_")
-            if normalized in BLOCKED_KEYS or normalized.endswith("_secret") or normalized.endswith("_token"):
+            normalized = str(key).strip().lower().replace("-", "").replace("_", "")
+            if (normalized in BLOCKED_KEYS or normalized.endswith("secret")
+                    or normalized.endswith("token") or normalized.endswith("privatekey")):
                 raise FomoSnapshotError(f"Sensitive field is not accepted: {path}.{key}")
             _check_no_secrets(child, f"{path}.{key}")
     elif isinstance(value, list):
@@ -36,6 +37,13 @@ def validate_snapshot(snapshot_type: str, payload: dict) -> str:
         raise FomoSnapshotError("Unsupported FOMO snapshot type")
     if not isinstance(payload, dict):
         raise FomoSnapshotError("Snapshot payload must be an object")
+    rows_key = "swaps" if snapshot_type == "spot_swaps" else "clans"
+    rows = payload.get(rows_key)
+    row_limit = 100 if snapshot_type == "spot_swaps" else 50
+    if not isinstance(rows, list) or len(rows) > row_limit:
+        raise FomoSnapshotError(f"{snapshot_type} must contain at most {row_limit} records")
+    if any(not isinstance(row, dict) for row in rows):
+        raise FomoSnapshotError("Snapshot records must be objects")
     _check_no_secrets(payload)
     try:
         encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
