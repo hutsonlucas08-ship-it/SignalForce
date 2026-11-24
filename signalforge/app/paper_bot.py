@@ -239,6 +239,7 @@ def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUT
         """
         SELECT e.mint, COUNT(*) AS buy_count,
                COUNT(DISTINCT e.wallet_address) AS wallet_count,
+               COALESCE(SUM(COALESCE(e.usd_amount,0)),0) AS buy_usd,
                MAX(e.occurred_at) AS latest_buy_at
         FROM wallet_trade_events e
         JOIN tracked_wallets w ON w.wallet_address=e.wallet_address
