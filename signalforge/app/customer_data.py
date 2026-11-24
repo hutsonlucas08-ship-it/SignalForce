@@ -128,7 +128,7 @@ def list_paper_trades(conn: sqlite3.Connection, account_id: str, paper_account_i
                   t.realized_pnl_usd,t.reason,t.created_at
            FROM customer_paper_trades t
            JOIN customer_paper_accounts a ON a.id=t.paper_account_id
-           WHERE a.account_id=? AND a.id=? ORDER BY t.created_at DESC,t.id DESC LIMIT ?""",
+           WHERE a.account_id=? AND a.id=? AND (a.auto_started_at IS NULL OR t.created_at>=a.auto_started_at) ORDER BY t.created_at DESC,t.id DESC LIMIT ?""",
         (account_id, paper_account_id, limit),
     ).fetchall()
     return [dict(row) for row in rows]
@@ -258,9 +258,9 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
         paper_id = secrets.token_urlsafe(18)
         conn.execute(
             """INSERT INTO customer_paper_accounts
-               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,profit_target_usd,auto_status,created_at,updated_at)
-               VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,'running',?,?)""",
-            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, now),
+               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,profit_target_usd,auto_status,auto_started_at,created_at,updated_at)
+               VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,'running',?,?,?)""",
+            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, now, now),
         )
     else:
         paper_id = existing["id"]
@@ -268,8 +268,8 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
             conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
             conn.execute(
                 """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,
-                   profit_target_usd=?,enabled=1,auto_status='running',updated_at=? WHERE id=? AND account_id=?""",
-                (float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, paper_id, account_id),
+                   profit_target_usd=?,enabled=1,auto_status='running',auto_started_at=?,updated_at=? WHERE id=? AND account_id=?""",
+                (float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, now, paper_id, account_id),
             )
         else:
             trade_count = conn.execute("SELECT COUNT(*) FROM customer_paper_trades WHERE paper_account_id=?", (paper_id,)).fetchone()[0]
