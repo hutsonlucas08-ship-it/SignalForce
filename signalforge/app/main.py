@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -550,19 +550,28 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             activity = own_activity.get(item["asset_id"])
             if activity:
                 item["your_fomo_activity"] = activity
-        trader_snapshot = next(
-            (item for item in snapshots if item["snapshot_type"] == "trader_leaderboard"),
-            None,
+        trader_snapshots = [
+            item for item in snapshots
+            if item["snapshot_type"].startswith("trader_leaderboard")
+        ]
+        trader_rows = sum(
+            len(((item.get("payload") or {}).get("traders") or []))
+            for item in trader_snapshots
         )
-        trader_rows = ((trader_snapshot or {}).get("payload") or {}).get("traders") or []
+        whale_gate = whale_selection.qualify_traders(trader_snapshots)
+        result["whale_selection"] = whale_gate
         result["fomo_context"] = {
             "connected_spot_swap_snapshot": bool(spot),
             "observed_spot_swaps": len(swaps),
             "observed_at": (spot or {}).get("observed_at"),
             "tokens_with_your_activity": len(own_activity),
-            "trader_leaderboard_captured": bool(trader_snapshot),
-            "trader_leaderboard_rows": len(trader_rows),
-            "trader_leaderboard_observed_at": (trader_snapshot or {}).get("observed_at"),
+            "trader_leaderboard_captured": bool(trader_snapshots),
+            "trader_leaderboard_rows": trader_rows,
+            "trader_leaderboard_windows": sorted(
+                item["snapshot_type"].removeprefix("trader_leaderboard_")
+                for item in trader_snapshots
+            ),
+            "leaderboard_qualified_traders": whale_gate["qualified_count"],
             "interpretation": "Your imported swaps are personal account history. Trader leaderboard rows are captured from FOMO's page but still require performance and identity validation before whale signals can be generated.",
         }
         return result
