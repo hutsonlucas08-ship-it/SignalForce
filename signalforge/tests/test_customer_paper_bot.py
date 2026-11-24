@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 
 from app import customer_data
-from app.customer_paper_bot import process_customer_accounts
+from app.customer_paper_bot import monitor_customer_positions, process_customer_accounts
 from app.db import connect, run_migrations, utcnow
 
 
-def _active_customer(conn):
+def _active_customer(conn, mode="normal"):
     now = utcnow()
     conn.execute(
         "INSERT INTO customer_accounts(id,email,password_hash,status,created_at,updated_at) "
@@ -14,7 +14,7 @@ def _active_customer(conn):
     )
     conn.commit()
     return customer_data.start_customer_paper_trader(
-        conn, "customer-a", 1000, 500, "normal"
+        conn, "customer-a", 1000, 500, mode
     )
 
 
@@ -77,3 +77,48 @@ def test_customer_paper_trader_still_accepts_wallet_confirmed_candidates():
     assert result["buys"] == 1
     trade = conn.execute("SELECT reason FROM customer_paper_trades").fetchone()
     assert "tracked-wallet confirmed" in trade["reason"]
+
+
+
+def test_ultra_aggressive_sells_40_percent_at_50_percent_then_trails_remaining_position():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_customer(conn, "ultra_aggressive")
+    mint = "MarketMint11111111111111111111111111"
+    entry = _market_pair()
+    process_customer_accounts(conn, {mint: entry}, {})
+    position = conn.execute("SELECT quantity FROM customer_paper_positions").fetchone()
+    original_quantity = float(position["quantity"])
+
+    rally = _market_pair()
+    rally["priceUsd"] = "0.015"
+    summary = monitor_customer_positions(conn, {mint: rally})
+    remaining = conn.execute("SELECT quantity,partial_profit_taken FROM customer_paper_positions").fetchone()
+
+    assert summary["partial_exits"] == 1
+    assert remaining["partial_profit_taken"] == 1
+    assert abs(float(remaining["quantity"]) - original_quantity * 0.60) < 1e-8
+
+    stronger_rally = _market_pair()
+    stronger_rally["priceUsd"] = "0.02"
+    monitor_customer_positions(conn, {mint: stronger_rally})
+    trailing_pullback = _market_pair()
+    trailing_pullback["priceUsd"] = "0.015"
+    summary = monitor_customer_positions(conn, {mint: trailing_pullback})
+
+    assert summary["take_profit_exits"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM customer_paper_positions").fetchone()[0] == 0
+
+
+def test_shared_risk_monitor_exits_position_after_major_liquidity_drop():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_customer(conn, "gradual")
+    mint = "MarketMint11111111111111111111111111"
+    process_customer_accounts(conn, {mint: _market_pair()}, {})
+    dangerous = _market_pair()
+    dangerous["liquidity"]["usd"] = 30000
+    summary = monitor_customer_positions(conn, {mint: dangerous})
+
+    assert summary["risk_exits"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM customer_paper_positions").fetchone()[0] == 0
