@@ -266,14 +266,19 @@ function pick(source, fields) {
 
 function cleanSwaps(rows, hasNextPage) {
   const fields = [
-    "id", "createdAt", "display", "displayPriceUsd", "humanUsdAmountIn",
+    "id", "createdAt", "displayPriceUsd", "humanUsdAmountIn",
     "humanUsdAmountOut", "inAmount", "inHumanAmount", "inNetworkId",
     "inTokenAddress", "inTradeId", "isCrossmint", "isOffPlatform", "networkId",
     "outAmount", "outHumanAmount", "outNetworkId", "outTokenAddress",
     "outTradeId", "provider"
   ];
   return {
-    swaps: rows.slice(0, 100).map(row => pick(row, fields)),
+    swaps: rows.slice(0, 100).map(row => {
+      const clean = pick(row, fields);
+      if (row.display && typeof row.display === "object") clean.display = pick(row.display, ["side"]);
+      else if (typeof row.display === "string") clean.display = row.display;
+      return clean;
+    }),
     has_next_page: Boolean(hasNextPage),
     count: Math.min(rows.length, 100)
   };
