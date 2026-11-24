@@ -99,10 +99,11 @@ td{color:#dce7ed}
  <section class="card wide hidden" id="fomoCopilotPanel" style="margin-top:16px">
   <div class="head">
    <div><div class="eyebrow">FOMO MARKET INTELLIGENCE</div><h2>FOMO Copilot</h2>
-   <p>Manual callouts combine fresh Solana market observations with your own FOMO activity as context. Individual whale performance is not yet verified. You execute trades yourself.</p><p class="small">To import trader rankings, keep the local bridge running and open FOMO → Leaderboard → Traders in the same Chrome window. The bridge passively reads the leaderboard response; it never clicks or places trades.</p></div>
+   <p>Manual callouts combine fresh Solana market observations with your own FOMO activity as context. Individual whale performance is not yet verified. You execute trades yourself.</p><p class="small">To import trader rankings, keep the local bridge running and open FOMO → Leaderboard → Traders in the same Chrome window. Switch through 24h, 7d and 30d so SignalForce can compare all three windows. The bridge passively reads the leaderboard response; it never clicks or places trades.</p></div>
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
   <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. The 0–100 score is a rule-based screening score, not a win probability. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
+  <div class="card" style="margin:12px 0"><div class="eyebrow">FOMO TRADER QUALIFICATION</div><h3 style="font-size:14px;margin:6px 0">Leaderboard-qualified traders</h3><p class="small">Strict filters: present in at least two leaderboard windows, 55%+ win rate, 20+ trades in 7d, median hold of 15+ minutes, and no more than 40% of 7d P&amp;L from one token. Missing data never passes.</p><div id="whaleCandidates" class="launch-grid"><div class="empty">Waiting for FOMO leaderboard data.</div></div><p class="small">These are FOMO leaderboard filters, not independently chain-verified trader performance. No trader is treated as a whale signal until the evidence is validated.</p></div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">YOUR TELEGRAM BOT</div><h3 style="font-size:14px;margin:6px 0">Get callout alerts on your phone</h3><p class="small">Create a bot with Telegram's @BotFather, paste its token here, then open your bot and press Start. Your token is encrypted for your account and is never shown again.</p><div class="field"><label>Your Telegram bot token</label><input id="calloutTelegramToken" type="password" autocomplete="off" placeholder="Paste your own bot token"></div><div class="actions"><button class="btn" id="saveCalloutTelegram" type="button">Save bot token</button><button class="btn" id="discoverCalloutTelegram" type="button">Find my chat</button><button class="btn" id="testCalloutTelegram" type="button">Test connection</button><button class="btn primary" id="sendCalloutTelegram" type="button">Send top callouts</button></div><div id="calloutTelegramStatus" class="small" style="margin-top:8px">Telegram is optional. Connect your own bot to receive alerts.</div></div>
   <div class="actions" style="margin-bottom:12px">
    <button class="btn primary" id="generateFomoPairing" type="button">Generate pairing code</button><button class="btn" id="refreshFomo" type="button">Refresh FOMO data</button>
@@ -192,7 +193,12 @@ async function loadFomoCallouts(){
   }).join(""):'<div class="empty">No assets passed the current freshness, liquidity and volume filters. This is normal; filters are not relaxed to force signals.</div>';
   host.querySelectorAll("[data-copy-mint]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.getAttribute("data-copy-mint"));button.textContent="Copied";}catch(_){button.textContent="Copy unavailable";}}));
   const context=data.fomo_context||{};
-  status.textContent+=" · Your swaps: "+(context.connected_spot_swap_snapshot?context.observed_spot_swaps:"not connected")+" · FOMO trader leaderboard: "+(context.trader_leaderboard_captured?(context.trader_leaderboard_rows+" rows captured"):"open the Traders leaderboard in FOMO to capture it");
+  status.textContent+=" · Your swaps: "+(context.connected_spot_swap_snapshot?context.observed_spot_swaps:"not connected")+" · FOMO leaderboard windows: "+((context.trader_leaderboard_windows||[]).join(", ")||"not captured")+" · Qualified traders: "+(context.leaderboard_qualified_traders??0);
+  const gate=data.whale_selection||{},qualified=gate.qualified_traders||[],whaleHost=$("whaleCandidates");
+  whaleHost.innerHTML=qualified.length?qualified.map(t=>{
+   const m=t.metrics||{};
+   return '<article class="launch-card"><div><strong>'+esc(t.handle)+'</strong><small>7d P&amp;L '+usd(m.pnl_7d)+' · Win rate '+(Number(m.win_rate)*100).toFixed(1)+'% · Trades '+esc(m.trades_7d)+'</small><small>Median hold '+esc(Number(m.median_hold_minutes).toFixed(1))+' min · Largest token P&amp;L share '+(Number(m.max_single_token_pnl_share)*100).toFixed(1)+'% · Windows '+esc((t.leaderboard_windows||[]).join(", "))+'</small><small class="small">Leaderboard-qualified only — not chain-verified.</small></div></article>';
+  }).join(""):'<div class="empty">No trader currently passes every rule. Missing win rate, trade count, median hold, token concentration, or multi-window data is a hard fail.</div>';
  }catch(error){status.textContent="Callout scan unavailable: "+error.message;status.classList.add("error");}
 }
 $("refreshCallouts").onclick=loadFomoCallouts;
@@ -223,7 +229,7 @@ async function loadFomoCopilot(){
      const amount=row.humanUsdAmountIn||row.humanUsdAmountOut||"—";
      return '<div class="launch-card"><div><strong>'+esc(side)+' · '+esc(amount)+'</strong><small>'+esc(row.provider||"FOMO")+' · '+esc(row.createdAt||"Time unavailable")+'</small><small class="mono">'+esc(row.inTokenAddress||"")+' → '+esc(row.outTokenAddress||"")+'</small></div></div>';
     }
-    if(snapshot.snapshot_type==="trader_leaderboard"){
+    if(snapshot.snapshot_type.startsWith("trader_leaderboard")){
      const user=row.user||{},stats=row.stats||{};
      const name=user.userHandle||user.displayName||row.userHandle||row.displayName||"FOMO trader";
      const pnl=row.pnl??row.pnlUsd??stats.pnl??stats.pnlUsd??"—";
