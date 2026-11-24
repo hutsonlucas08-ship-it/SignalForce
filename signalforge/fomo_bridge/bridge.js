@@ -59,46 +59,59 @@ function hiddenInput(promptText) {
 }
 
 class ReadOnlyFomoBrowser {
-  constructor(tab) {
-    this.tab = tab;
-    this.ws = null;
+  constructor(pageTab, networkTabs) {
+    this.pageTab = pageTab;
+    this.networkTabs = networkTabs;
+    this.pageWs = null;
+    this.networkSockets = [];
     this.nextId = 0;
     this.pending = new Map();
-    this.requestUrls = new Map();
-    this.earlyHeaders = new Map();
     this.authHeader = null;
+    this.cookieHeader = null; // Local process memory only; never included in snapshots.
     this.authCapturedAt = 0;
     this.userId = null;
     this.sessionBlocked = false;
     this.authWaiters = [];
-    this.leaderboardRequests = new Set();
-    this.traderSwapCache = new Map();
-    this.traderSwapCursor = 0;
   }
 
   async connect() {
-    this.ws = new WebSocket(this.tab.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      this.ws.addEventListener("open", resolve, { once: true });
-      this.ws.addEventListener("error", () => reject(new Error("Could not connect to the local Chrome debugging session.")), { once: true });
-    });
-    this.ws.addEventListener("message", event => this.onMessage(event.data));
-    await this.send("Network.enable");
-    await this.send("Page.enable");
+    // FOMO may issue authenticated requests from either its page or service worker.
+    for (const tab of this.networkTabs) {
+      const ws = new WebSocket(tab.webSocketDebuggerUrl);
+      await new Promise((resolve, reject) => {
+        ws.addEventListener("open", resolve, { once: true });
+        ws.addEventListener("error", () => reject(new Error("Could not connect to a local FOMO Chrome target.")), { once: true });
+      });
+      const state = {
+        ws,
+        requestUrls: new Map(),
+        earlyHeaders: new Map(),
+        leaderboardRequests: new Set(),
+        isPage: tab.id === this.pageTab.id
+      };
+      ws.addEventListener("message", event => this.onMessage(state, event.data));
+      this.networkSockets.push(state);
+      await this.send(state, "Network.enable");
+      if (state.isPage) {
+        this.pageWs = ws;
+        await this.send(state, "Page.enable");
+      }
+    }
+    if (!this.pageWs) throw new Error("Could not attach to the FOMO page target.");
   }
 
-  send(method, params = {}) {
+  send(state, method, params = {}) {
     if (!ALLOWED_CDP_METHODS.has(method)) {
       throw new Error("This bridge blocks all browser commands outside its read-only allowlist.");
     }
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
+      state.ws.send(JSON.stringify({ id, method, params }));
     });
   }
 
-  onMessage(raw) {
+  onMessage(state, raw) {
     let message;
     try { message = JSON.parse(String(raw)); } catch (_) { return; }
     if (message.id) {
@@ -111,39 +124,40 @@ class ReadOnlyFomoBrowser {
     }
     const params = message.params || {};
     if (message.method === "Network.requestWillBeSent") {
-      this.requestUrls.set(params.requestId, params.request?.url || "");
-      const early = this.earlyHeaders.get(params.requestId);
+      const url = params.request?.url || "";
+      state.requestUrls.set(params.requestId, url);
+      const early = state.earlyHeaders.get(params.requestId);
       if (early) {
-        this.earlyHeaders.delete(params.requestId);
-        this.captureAuth(this.requestUrls.get(params.requestId), early);
+        state.earlyHeaders.delete(params.requestId);
+        this.captureCredentials(url, early);
       }
-      const match = (params.request?.url || "").match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([^/?#]+)\/(?:balances|swaps)(?:\?|$)/i);
+      const match = url.match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([^/?#]+)\/(?:balances|swaps)(?:\?|$)/i);
       if (match) this.userId = match[1];
       this.resolveAuthWaiters();
     } else if (message.method === "Network.requestWillBeSentExtraInfo") {
-      const url = this.requestUrls.get(params.requestId);
-      if (url) this.captureAuth(url, params.headers || {});
-      else this.earlyHeaders.set(params.requestId, params.headers || {});
+      const url = state.requestUrls.get(params.requestId);
+      if (url) this.captureCredentials(url, params.headers || {});
+      else state.earlyHeaders.set(params.requestId, params.headers || {});
     } else if (message.method === "Network.responseReceived") {
-      const url = this.requestUrls.get(params.requestId) || params.response?.url || "";
+      const url = state.requestUrls.get(params.requestId) || params.response?.url || "";
       if (url.startsWith(FOMO_API + "/") && !/\/clans\//i.test(url) &&
           /leaderboard|top.?traders|traders/i.test(url) &&
           Number(params.response?.status) === 200 &&
           /json/i.test(params.response?.mimeType || "") &&
-          !this.leaderboardRequests.has(params.requestId)) {
-        this.leaderboardRequests.add(params.requestId);
+          !state.leaderboardRequests.has(params.requestId)) {
+        state.leaderboardRequests.add(params.requestId);
       }
     } else if (message.method === "Network.loadingFinished" &&
-               this.leaderboardRequests.has(params.requestId)) {
-      this.leaderboardRequests.delete(params.requestId);
-      const url = this.requestUrls.get(params.requestId) || "";
-      this.captureTraderLeaderboard(params.requestId, url).catch(() => {});
+               state.leaderboardRequests.has(params.requestId)) {
+      state.leaderboardRequests.delete(params.requestId);
+      const url = state.requestUrls.get(params.requestId) || "";
+      this.captureTraderLeaderboard(state, params.requestId, url).catch(() => {});
     }
   }
 
-  async captureTraderLeaderboard(requestId, url) {
+  async captureTraderLeaderboard(state, requestId, url) {
     try {
-      const response = await this.send("Network.getResponseBody", { requestId });
+      const response = await this.send(state, "Network.getResponseBody", { requestId });
       const raw = response.base64Encoded
         ? Buffer.from(response.body || "", "base64").toString("utf8")
         : String(response.body || "");
@@ -171,15 +185,24 @@ class ReadOnlyFomoBrowser {
           ...pick(row, [
             "rank", "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct",
             "winRate", "totalTrades", "numTrades", "swapCount", "totalVolume",
-            "volumeUsd", "followers", "verified", "userId", "user_id", "userHandle", "handle", "username", "displayName", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare", "pnl_usd", "win_rate", "total_trades", "median_hold_minutes", "median_hold_seconds", "max_single_token_pnl_share"
+            "volumeUsd", "followers", "verified", "userId", "user_id", "userHandle",
+            "handle", "username", "displayName", "medianHoldMinutes", "medianHoldSeconds",
+            "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare",
+            "pnl_usd", "win_rate", "total_trades", "median_hold_minutes",
+            "median_hold_seconds", "max_single_token_pnl_share"
           ]),
           user: pick(user, [
-            "id", "userId", "user_id", "userHandle", "handle", "username", "displayName", "followers",
-            "following", "numTrades", "swapCount", "totalVolume", "verified"
+            "id", "userId", "user_id", "userHandle", "handle", "username",
+            "displayName", "followers", "following", "numTrades", "swapCount",
+            "totalVolume", "verified"
           ]),
           stats: pick(stats, [
             "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct", "winRate",
-            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare", "pnl_usd", "win_rate", "total_trades", "median_hold_minutes", "median_hold_seconds", "max_single_token_pnl_share"
+            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd",
+            "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare",
+            "topTokenPnlShare", "singleTokenPnlShare", "pnl_usd", "win_rate",
+            "total_trades", "median_hold_minutes", "median_hold_seconds",
+            "max_single_token_pnl_share"
           ])
         };
         return clean;
@@ -188,8 +211,13 @@ class ReadOnlyFomoBrowser {
       ) || Object.keys(row.user).length > 0 || Object.keys(row.stats).length > 0);
       if (!traders.length) return;
       const urlObject = new URL(url);
-      const pathWindow = urlObject.pathname.split("/").find(segment => ["24h", "7d", "30d"].includes(segment.toLowerCase()));
-      const window = urlObject.searchParams.get("window") || urlObject.searchParams.get("period") || urlObject.searchParams.get("timeframe") || pathWindow || "unknown";
+      const pathWindow = urlObject.pathname.split("/").find(segment =>
+        ["24h", "7d", "30d"].includes(segment.toLowerCase())
+      );
+      const window = urlObject.searchParams.get("window") ||
+        urlObject.searchParams.get("period") ||
+        urlObject.searchParams.get("timeframe") ||
+        pathWindow || "unknown";
       const normalizedWindow = String(window).toLowerCase();
       const snapshotType = ["24h", "7d", "30d"].includes(normalizedWindow)
         ? "trader_leaderboard_" + normalizedWindow
@@ -198,30 +226,41 @@ class ReadOnlyFomoBrowser {
         traders,
         window: normalizedWindow.slice(0, 24),
         endpoint_path: urlObject.pathname.slice(0, 180),
-        note: "Captured passively from the authenticated FOMO page. Field availability varies; rankings are not independently verified."
+        note: "Captured passively from the authenticated FOMO page or service worker. Field availability varies; rankings are not independently verified."
       });
       process.stdout.write("FOMO trader leaderboard snapshot captured · " + traders.length + " rows.\n");
     } catch (_) {
-      // A response that is not JSON or whose body has already expired is ignored.
+      // A response that is not JSON or whose body has expired is ignored.
     }
   }
 
-  captureAuth(url, headers) {
+  captureCredentials(url, headers) {
     if (!String(url || "").startsWith(FOMO_API + "/")) return;
-    const entry = Object.entries(headers || {}).find(([name, value]) =>
+    const entries = Object.entries(headers || {});
+    const authorization = entries.find(([name, value]) =>
       String(name).toLowerCase() === "authorization" &&
       typeof value === "string" && value.startsWith("Bearer ")
     );
-    if (entry) {
-      this.authHeader = entry[1];
+    const cookie = entries.find(([name, value]) =>
+      String(name).toLowerCase() === "cookie" &&
+      typeof value === "string" && value.length > 0
+    );
+    if (authorization) this.authHeader = authorization[1];
+    if (cookie) this.cookieHeader = cookie[1];
+    if (authorization || cookie) {
+      // FOMO credentials stay on this Mac and are used only for read-only GETs.
       this.authCapturedAt = Date.now();
       this.sessionBlocked = false;
       this.resolveAuthWaiters();
     }
   }
 
+  hasSessionCredential() {
+    return Boolean(this.authHeader || this.cookieHeader);
+  }
+
   resolveAuthWaiters() {
-    if (!this.authHeader || !this.userId) return;
+    if (!this.hasSessionCredential() || !this.userId) return;
     for (const resolve of this.authWaiters.splice(0)) resolve();
   }
 
@@ -232,20 +271,22 @@ class ReadOnlyFomoBrowser {
         !/(^|\/)(coin|profile)(\/|$)/i.test(parsed.pathname)) {
       throw new Error("Only FOMO coin and profile pages may be opened.");
     }
-    return this.send("Page.navigate", { url: parsed.href });
+    const pageState = this.networkSockets.find(state => state.isPage);
+    return this.send(pageState, "Page.navigate", { url: parsed.href });
   }
 
   // Browser surface 2/4: screenshot is read-only and stays in memory.
   async screenshot() {
-    return this.send("Page.captureScreenshot", { format: "png", fromSurface: true });
+    const pageState = this.networkSockets.find(state => state.isPage);
+    return this.send(pageState, "Page.captureScreenshot", { format: "png", fromSurface: true });
   }
 
-  // Browser surface 3/4: observe FOMO's own network requests; never print the header.
-  async read_network(timeoutMs = 30_000) {
-    if (this.authHeader && this.userId) return;
+  // Browser surface 3/4: observe FOMO requests; credentials are never logged or uploaded.
+  async read_network(timeoutMs = 45_000) {
+    if (this.hasSessionCredential() && this.userId) return;
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(
-        "No authenticated FOMO API request observed. Sign in to FOMO and refresh its page."
+        "No authenticated FOMO balances/swaps request observed in the page or service worker. Open your FOMO profile or transactions and refresh."
       )), timeoutMs);
       this.authWaiters.push(() => { clearTimeout(timer); resolve(); });
     });
@@ -253,11 +294,14 @@ class ReadOnlyFomoBrowser {
 
   // Browser surface 4/4: reload only the already-open FOMO page.
   async reload() {
-    await this.send("Page.reload", { ignoreCache: true });
+    const pageState = this.networkSockets.find(state => state.isPage);
+    return this.send(pageState, "Page.reload", { ignoreCache: true });
   }
 
   async refreshSession() {
     this.authHeader = null;
+    this.cookieHeader = null;
+    this.userId = null;
     try {
       await this.reload();
       await this.read_network();
@@ -272,11 +316,16 @@ async function connectFomoBrowser() {
   const response = await fetch(CHROME_DEBUG + "/json/list");
   if (!response.ok) throw new Error("Chrome debugging endpoint is unavailable on 127.0.0.1:9334.");
   const tabs = await response.json();
-  const tab = tabs.find(item => item.type === "page" && /^https:\/\/fomo\.family\//i.test(item.url || ""));
-  if (!tab?.webSocketDebuggerUrl) {
+  const pageTab = tabs.find(item => item.type === "page" && /^https:\/\/fomo\.family\//i.test(item.url || ""));
+  if (!pageTab?.webSocketDebuggerUrl) {
     throw new Error("Open FOMO in the dedicated Chrome profile on port 9334, then run this bridge again.");
   }
-  const browser = new ReadOnlyFomoBrowser(tab);
+  const networkTabs = tabs.filter(item =>
+    item.webSocketDebuggerUrl &&
+    ((item.type === "page" && /^https:\/\/fomo\.family\//i.test(item.url || "")) ||
+     (item.type === "service_worker" && /^https:\/\/fomo\.family\//i.test(item.url || "")))
+  );
+  const browser = new ReadOnlyFomoBrowser(pageTab, networkTabs);
   await browser.connect();
   return browser;
 }
@@ -301,23 +350,28 @@ async function waitForFomoRateSlot() {
 }
 
 async function fomoGet(browser, path, allowAuthRefresh = true) {
-  if (!browser.authHeader) throw new Error("FOMO session is not authenticated; sign in manually and refresh the FOMO page.");
+  if (!browser.hasSessionCredential()) throw new Error("FOMO session is not authenticated; sign in manually and refresh the FOMO page.");
   if (!path.startsWith("/v2/")) throw new Error("Only verified FOMO read endpoints are allowed.");
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await waitForFomoRateSlot();
+    const requestHeaders = { Accept: "application/json" };
+    if (browser.authHeader) requestHeaders.Authorization = browser.authHeader;
+    if (browser.cookieHeader) requestHeaders.Cookie = browser.cookieHeader;
     const response = await fetch(FOMO_API + path, {
       method: "GET",
-      headers: { Accept: "application/json", Authorization: browser.authHeader || "" },
+      headers: requestHeaders,
       signal: AbortSignal.timeout(15_000),
       cache: "no-store"
     });
     if (response.status === 401 && allowAuthRefresh) {
       browser.authHeader = null;
+      browser.cookieHeader = null;
       await browser.refreshSession();
       return fomoGet(browser, path, false);
     }
     if (response.status === 401) {
       browser.authHeader = null;
+      browser.cookieHeader = null;
       browser.sessionBlocked = true;
       throw new Error("FOMO session expired after one refresh attempt. Sign in manually in Chrome; reads are paused.");
     }
@@ -488,11 +542,11 @@ async function pollOnce(browser) {
   if (pollRunning) return;
   pollRunning = true;
   try {
-    if (browser.sessionBlocked && !browser.authHeader) {
+    if (browser.sessionBlocked && !browser.hasSessionCredential()) {
       process.stdout.write("FOMO session paused. Sign in manually in the FOMO Chrome window; reads resume after a fresh authenticated request.\n");
       return;
     }
-    if (!browser.authHeader || !browser.userId ||
+    if (!browser.hasSessionCredential() || !browser.userId ||
         Date.now() - browser.authCapturedAt > 55 * 60 * 1000) {
       await browser.refreshSession();
     }
