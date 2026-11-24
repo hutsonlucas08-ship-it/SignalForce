@@ -190,5 +190,7 @@ def test_public_terminal_route_serves_market_terminal_and_customer_workspace_lin
     assert 'href="/account"' in terminal.text
     account = client.get("/account")
     assert account.status_code == 200
-    assert 'href="/terminal"' in account.text
+    assert "CUSTOMER PAPER DESK" in account.text
+    assert 'href="/terminal"' not in account.text
+    assert "No wallet connection or API key is required" in account.text
 
