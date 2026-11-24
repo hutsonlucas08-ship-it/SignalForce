@@ -221,7 +221,8 @@ $("discoverCalloutTelegram").onclick=async()=>{try{const data=await request("/v1
 $("testCalloutTelegram").onclick=async()=>{try{await request("/v1/customer/integrations/test",{method:"POST",body:JSON.stringify({provider:"telegram"})});$("calloutTelegramStatus").textContent="Telegram test passed. You can now send callouts.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}};
 $("sendCalloutTelegram").onclick=async()=>{const button=$("sendCalloutTelegram");button.disabled=true;try{const data=await request("/v1/customer/fomo-copilot/callouts/telegram",{method:"POST",body:"{}"});$("calloutTelegramStatus").textContent="Sent "+data.count+" current callouts to your Telegram.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}finally{button.disabled=false;}};
 
-function providerMoney(value){const n=Number(value);return value===null||value===undefined||value===""||!Number.isFinite(n)?"—":usd(n)}
+function providerMoney(value){if(value===null||value===undefined||value==="")return "—";const n=Number(String(value).replace(/[$,]/g,""));return !Number.isFinite(n)?"—":usd(n)}
+function providerPercent(value){if(value===null||value===undefined||value==="")return "not reported";const n=Number(String(value).replace("%",""));if(!Number.isFinite(n))return String(value);return (n<=1?n*100:n).toFixed(1)+"%"}
 function providerTime(value){if(!value)return "time unavailable";const d=new Date(value);return Number.isNaN(d.getTime())?"time unavailable":d.toLocaleTimeString()}
 async function loadCopytopFeed(){
  const status=$("providerFeedStatus"),tradesHost=$("providerLiveTrades"),leaderHost=$("providerLeaderboard"),hotHost=$("providerHotCoins");
@@ -232,7 +233,7 @@ async function loadCopytopFeed(){
   const alertRows=data.alerts||[];
   const failures=Object.values(errors).filter(Boolean);
   status.textContent="COPY.TOP "+(failures.length?"PARTIAL FEED · "+failures.join(" · "):"LIVE FEED CONNECTED")+" · "+tradeRows.length+" trades · "+leaderRows.length+" traders · refreshed "+providerTime(data.generated_at);
-  status.classList.toggle("error",failures.length===3);
+  status.classList.toggle("error",failures.length>0);
   $("providerAlerts").innerHTML=alertRows.length?alertRows.slice(0,20).map(x=>{
    return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(String(x.kind||"alert").replaceAll("_"," ").toUpperCase())+' · '+esc(x.symbol||"?")+' · '+esc(x.trader_count??"—")+' traders</strong><small style="display:block;color:#91a0ad">'+esc(x.summary||"Provider-reported trader activity")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small><small>'+esc((x.traders||[]).join(", "))+'</small>'+(x.mint?'<small class="mono">'+esc(x.mint)+'</small>':"")+'</div>';
   }).join(""):'<div class="empty">'+esc(errors.alerts||"No recent confluence or big-trade events passed the provider thresholds.")+'</div>';
@@ -244,7 +245,7 @@ async function loadCopytopFeed(){
   }).join(""):'<div class="empty">'+esc(errors.live_trades||"No recent trades returned for the current FOMO leaderboard watchlist.")+'</div>';
   leaderHost.innerHTML=leaderRows.length?leaderRows.slice(0,20).map((x,i)=>{
    const fair=String(x.fair_play||"not reported").replaceAll("_"," ");
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>#'+esc(x.rank??(i+1))+' · '+esc(x.handle)+'</strong><small style="display:block;color:#91a0ad">Realized P&amp;L '+esc(providerMoney(x.realized_pnl))+' · Win rate '+esc(x.win_rate??"not reported")+' · Closed trades '+esc(x.closed_trades??"not reported")+'</small><small>Fair-play: '+esc(fair)+' · '+esc(x.platform||"FOMO")+'</small></div>';
+   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>#'+esc(x.rank??(i+1))+' · '+esc(x.handle)+'</strong><small style="display:block;color:#91a0ad">Realized P&amp;L '+esc(providerMoney(x.realized_pnl))+' · Win rate '+esc(providerPercent(x.win_rate))+' · Closed trades '+esc(x.closed_trades??"not reported")+'</small><small>Fair-play: '+esc(fair)+' · '+esc(x.platform||"FOMO")+'</small></div>';
   }).join(""):'<div class="empty">'+esc(errors.leaderboard||"No FOMO leaderboard rows returned.")+'</div>';
   hotHost.innerHTML=hotRows.length?hotRows.slice(0,15).map(x=>{
    const scope=x.platform_scope||"platform scope not confirmed";
