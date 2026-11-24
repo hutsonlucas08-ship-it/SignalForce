@@ -111,3 +111,12 @@ def test_local_bridge_exposes_no_dom_input_or_wallet_signing_surface():
     assert 'this.send("page.reload"' in source
     assert "allowed_cdp_methods" in source
     assert "if (!allowed_cdp_methods.has(method))" in source
+
+
+
+def test_manual_callout_endpoint_requires_customer_and_valid_limit():
+    client = _client()
+    assert client.get("/v1/customer/fomo-copilot/callouts").status_code == 401
+    _signed_in(client, "callouts@example.test")
+    assert client.get("/v1/customer/fomo-copilot/callouts?limit=0").status_code == 422
+    assert client.get("/v1/customer/fomo-copilot/callouts?limit=51").status_code == 422
