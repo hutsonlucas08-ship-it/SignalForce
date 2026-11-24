@@ -62,3 +62,27 @@ def test_customer_copytop_feed_is_authenticated_and_read_only(monkeypatch):
     assert response.json()["provider"] == "copy.top"
     assert response.json()["read_only"] is True
     assert response.json()["execution_enabled"] is False
+
+
+
+def test_copytop_maps_common_alternate_contract_and_trader_fields():
+    hot = copytop_feed._normalize_hot({
+        "symbol": "TEST",
+        "contract_address": "Mint123",
+        "trader_count": 4,
+        "top_traders": [{"user_handle": "@alpha"}, {"handle": "beta"}],
+    })
+    assert hot["mint"] == "Mint123"
+    assert hot["trader_count"] == 4
+    assert hot["traders"] == ["alpha", "beta"]
+
+
+def test_copytop_alert_accepts_numeric_trader_count_and_alternate_timestamp():
+    row = {
+        "kind": "confluence",
+        "symbol": "TEST",
+        "traders": 5,
+        "created_at": "2026-11-24T20:00:00Z",
+    }
+    count = copytop_feed._first(row, "traderCount", "trader_count", "topTraderCount", "top_trader_count", "tradersCount", "traders_count", "top_traders_count", "numTraders", "num_traders", default=(row.get("traders") if isinstance(row.get("traders"), int) else None))
+    assert count == 5
