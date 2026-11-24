@@ -102,7 +102,9 @@ td{color:#dce7ed}
    <p>Manual callouts combine fresh Solana market observations with your own FOMO activity as context. Individual whale performance is not yet verified. You execute trades yourself.</p></div>
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
-  <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>\n  <div class="actions" style="margin-bottom:12px">
+  <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
+  <div class="card" style="margin:12px 0"><div class="eyebrow">YOUR TELEGRAM BOT</div><h3 style="font-size:14px;margin:6px 0">Get callout alerts on your phone</h3><p class="small">Create a bot with Telegram's @BotFather, paste its token here, then open your bot and press Start. Your token is encrypted for your account and is never shown again.</p><div class="field"><label>Your Telegram bot token</label><input id="calloutTelegramToken" type="password" autocomplete="off" placeholder="Paste your own bot token"></div><div class="actions"><button class="btn" id="saveCalloutTelegram" type="button">Save bot token</button><button class="btn" id="discoverCalloutTelegram" type="button">Find my chat</button><button class="btn" id="testCalloutTelegram" type="button">Test connection</button><button class="btn primary" id="sendCalloutTelegram" type="button">Send top callouts</button></div><div id="calloutTelegramStatus" class="small" style="margin-top:8px">Telegram is optional. Connect your own bot to receive alerts.</div></div>
+  <div class="actions" style="margin-bottom:12px">
    <button class="btn primary" id="generateFomoPairing" type="button">Generate pairing code</button><button class="btn" id="refreshFomo" type="button">Refresh FOMO data</button>
    <button class="btn" id="disconnectFomo" type="button">Disconnect &amp; clear data</button>
   </div>
@@ -191,6 +193,12 @@ async function loadFomoCallouts(){
  }catch(error){status.textContent="Callout scan unavailable: "+error.message;status.classList.add("error");}
 }
 $("refreshCallouts").onclick=loadFomoCallouts;
+
+$("saveCalloutTelegram").onclick=async()=>{const token=$("calloutTelegramToken").value.trim();if(!token){$("calloutTelegramStatus").textContent="Paste your bot token first.";return;}try{await request("/v1/customer/integrations",{method:"POST",body:JSON.stringify({provider:"telegram",credentials:{bot_token:token}})});$("calloutTelegramToken").value="";$("calloutTelegramStatus").textContent="Bot token saved securely. Open your bot in Telegram, press Start, then select Find my chat.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}};
+$("discoverCalloutTelegram").onclick=async()=>{try{const data=await request("/v1/customer/integrations/telegram/discover",{method:"POST",body:"{}"});$("calloutTelegramStatus").textContent="Telegram chat connected. Chat ID: "+data.chat_id;}catch(e){$("calloutTelegramStatus").textContent=e.message;}};
+$("testCalloutTelegram").onclick=async()=>{try{await request("/v1/customer/integrations/test",{method:"POST",body:JSON.stringify({provider:"telegram"})});$("calloutTelegramStatus").textContent="Telegram test passed. You can now send callouts.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}};
+$("sendCalloutTelegram").onclick=async()=>{const button=$("sendCalloutTelegram");button.disabled=true;try{const data=await request("/v1/customer/fomo-copilot/callouts/telegram",{method:"POST",body:"{}"});$("calloutTelegramStatus").textContent="Sent "+data.count+" current callouts to your Telegram.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}finally{button.disabled=false;}};
+
 async function loadFomoCopilot(){
  const status=$("fomoConnectionStatus"),host=$("fomoSnapshotList");
  try{
@@ -199,7 +207,8 @@ async function loadFomoCopilot(){
    ?"CONNECTED · "+data.snapshot_count+" FOMO feeds received · "+(data.bridge_paired?"local bridge paired":"bridge key not paired")+" · Read-only / manual execution"
    :(data.bridge_paired?"BRIDGE PAIRED · Waiting for the first FOMO snapshot.":"NOT CONNECTED · Start the local Node bridge below.");
   status.classList.toggle("error",false);
-  const snapshots=data.snapshots||[];\n  await loadFomoCallouts();
+  const snapshots=data.snapshots||[];
+  await loadFomoCallouts();
   host.innerHTML=snapshots.length?snapshots.map(snapshot=>{
    const payload=snapshot.payload||{};
    const rows=payload.swaps||payload.clans||[];
