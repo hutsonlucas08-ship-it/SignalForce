@@ -231,7 +231,7 @@ def get_customer_paper_trader(conn, account_id: str) -> dict | None:
     ).fetchall()
     market_value = sum(float(p["quantity"]) * (float(p["last_price"]) or float(p["average_entry_price"])) for p in positions)
     equity = float(account["cash_balance_usd"]) + market_value
-    realized = conn.execute("SELECT COALESCE(SUM(realized_pnl_usd),0) FROM customer_paper_trades WHERE paper_account_id=? AND side='sell'", (account["id"],)).fetchone()[0]
+    realized = conn.execute("SELECT COALESCE(SUM(realized_pnl_usd),0) FROM customer_paper_trades WHERE paper_account_id=? AND side='sell' AND (paper_session_id=? OR ? IS NULL)", (account["id"], account["auto_session_id"], account["auto_session_id"])).fetchone()[0]
     account.update({
         "equity_usd": round(equity, 2),
         "profit_usd": round(equity - float(account["starting_capital_usd"]), 2),
