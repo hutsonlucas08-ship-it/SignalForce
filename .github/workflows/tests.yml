@@ -10,6 +10,7 @@ on:
     branches:
       - smart-money-tracker
       - signalforge-2.0
+      - postgresql-migration
   workflow_dispatch:
 
 permissions:
@@ -52,6 +53,12 @@ jobs:
           cache-dependency-path: signalforge/requirements.txt
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Set up Node.js for the local bridge
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check local FOMO bridge JavaScript syntax
+        run: node --check fomo_bridge/bridge.js
       - name: Run SQLite test suite
         run: python -m pytest -q
       - name: Run PostgreSQL integration tests

@@ -144,6 +144,8 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "021_repair_customer_paper_session_columns.sql",
         "022_fast_customer_risk_monitor.sql",
         "023_customer_strategy_profile.sql",
+        "024_customer_fomo_copilot.sql",
+        "025_customer_fomo_bridge_pairing.sql",
     ]
     assert run_migrations(conn) == []
     state = conn.execute("SELECT enabled FROM paper_bot_state WHERE id=1").fetchone()
