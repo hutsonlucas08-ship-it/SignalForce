@@ -83,6 +83,6 @@ $("paperTraderForm").onsubmit=async e=>{e.preventDefault();$("startTrader").disa
 $("pauseTrader").onclick=async()=>{if(!traderAccount)return;if(traderAccount.is_running){try{await request("/v1/customer/paper-trader/pause",{method:"POST",body:"{}"});await loadPaperTrader();message("notice","Your paper trader is paused.")}catch(e){message("notice",e.message,true)}}else{ $("paperSetup").classList.remove("hidden");$("paperDashboard").classList.add("hidden");$("traderCapital").value=traderAccount.starting_capital_usd;$("traderTarget").value=traderAccount.profit_target_usd;$("traderMode").value=traderAccount.strategy_mode}};
 $("logout").onclick=async()=>{try{await request("/v1/customer/logout",{method:"POST"})}catch(_){}csrf="";sessionStorage.removeItem("sf_customer_csrf");location.reload()};
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}function usd(v){return "$"+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2})}
-$("refreshLaunches").onclick=loadLaunches;loadLaunches();setInterval(loadLaunches,45000);
+$("refreshLaunches").onclick=loadLaunches;loadLaunches();setInterval(loadLaunches,45000);setInterval(()=>{if(!$("workspace").classList.contains("hidden"))loadPaperTrader().catch(()=>{})},15000);
 (async()=>{try{await loadWorkspace()}catch(_){$("authView").classList.remove("hidden")}})();
 </script></body></html>
