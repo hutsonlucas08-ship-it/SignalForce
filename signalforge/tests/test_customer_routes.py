@@ -170,6 +170,9 @@ def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
     assert trader["is_running"] is True
     assert trader["starting_capital_usd"] == 1000
     assert trader["profit_target_usd"] == 500
+    blocked_manual = client_a.post(f"/v1/customer/paper-accounts/{trader['id']}/trades",
+        headers={"X-CSRF-Token": csrf_a}, json={"asset_id": "mint", "side": "buy", "amount_usd": 20, "reference_price": 2})
+    assert blocked_manual.status_code == 422
     assert client_b.get("/v1/customer/paper-trader").json()["paper_trader"] is None
 
     paused = client_a.post("/v1/customer/paper-trader/pause",
