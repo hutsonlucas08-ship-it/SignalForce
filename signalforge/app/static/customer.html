@@ -99,7 +99,7 @@ td{color:#dce7ed}
  <section class="card wide hidden" id="fomoCopilotPanel" style="margin-top:16px">
   <div class="head">
    <div><div class="eyebrow">FOMO MARKET INTELLIGENCE</div><h2>FOMO Copilot</h2>
-   <p>Manual callouts combine fresh Solana market observations with your own FOMO activity as context. Individual whale performance is not yet verified. You execute trades yourself.</p></div>
+   <p>Manual callouts combine fresh Solana market observations with your own FOMO activity as context. Individual whale performance is not yet verified. You execute trades yourself.</p><p class="small">To import trader rankings, keep the local bridge running and open FOMO → Leaderboard → Traders in the same Chrome window. The bridge passively reads the leaderboard response; it never clicks or places trades.</p></div>
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
   <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. The 0–100 score is a rule-based screening score, not a win probability. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
