@@ -23,7 +23,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -112,6 +112,12 @@ class CustomerIntegrationRequest(BaseModel):
 
 class CustomerProviderRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=20)
+
+
+class CustomerFomoSnapshotRequest(BaseModel):
+    snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d)$")
+    observed_at: Optional[str] = None
+    payload: dict
 
 
 class RiskScreenRequest(BaseModel):
@@ -447,6 +453,50 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return {"disconnected": customer_integrations.disconnect_customer_integration(conn, session["account_id"], provider)}
         except customer_integrations.CustomerIntegrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.get("/v1/customer/fomo-copilot")
+    def customer_fomo_copilot(session=Depends(require_customer), conn=Depends(get_conn)):
+        snapshots = fomo_copilot.list_snapshots(conn, session["account_id"])
+        return {
+            "connected": bool(snapshots),
+            "snapshot_count": len(snapshots),
+            "snapshots": snapshots,
+            "mode": "read_only_manual",
+            "execution_enabled": False,
+        }
+
+    @app.post("/v1/customer/fomo-copilot/snapshot")
+    def customer_fomo_copilot_snapshot(
+        body: CustomerFomoSnapshotRequest,
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        try:
+            encoded = fomo_copilot.validate_snapshot(body.snapshot_type, body.payload)
+            observed_at = fomo_copilot.parse_observed_at(body.observed_at)
+        except fomo_copilot.FomoSnapshotError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        now = utcnow()
+        conn.execute(
+            "INSERT INTO customer_fomo_snapshots "
+            "(account_id, snapshot_type, payload_json, source, observed_at, created_at) "
+            "VALUES (?, ?, ?, 'fomo-browser-bridge', ?, ?) "
+            "ON CONFLICT(account_id, snapshot_type) DO UPDATE SET "
+            "payload_json=excluded.payload_json, source=excluded.source, "
+            "observed_at=excluded.observed_at, created_at=excluded.created_at",
+            (session["account_id"], body.snapshot_type, encoded, observed_at, now),
+        )
+        conn.commit()
+        return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
+
+    @app.delete("/v1/customer/fomo-copilot")
+    def customer_fomo_copilot_disconnect(
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        conn.execute("DELETE FROM customer_fomo_snapshots WHERE account_id=?", (session["account_id"],))
+        conn.commit()
+        return {"disconnected": True}
 
     @app.get("/account", include_in_schema=False)
     def customer_workspace():
