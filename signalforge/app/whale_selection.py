@@ -47,6 +47,8 @@ def _metric(row, keys):
 def _identity(row):
     user = row.get("user") if isinstance(row.get("user"), dict) else {}
     user_id = user.get("userId") or user.get("user_id") or user.get("id") or row.get("userId") or row.get("user_id")
+    if isinstance(user_id, int) and not isinstance(user_id, bool):
+        user_id = str(user_id)
     if not isinstance(user_id, str) or not user_id.strip():
         return None
     handle = user.get("userHandle") or user.get("handle") or user.get("username") or user.get("displayName") or row.get("userHandle") or row.get("handle") or row.get("username") or "FOMO trader"
