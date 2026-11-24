@@ -118,7 +118,7 @@ class CustomerProviderRequest(BaseModel):
 
 
 class CustomerFomoSnapshotRequest(BaseModel):
-    snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d|trader_leaderboard|trader_leaderboard_24h|trader_leaderboard_7d|trader_leaderboard_30d)$")
+    snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d|trader_leaderboard|trader_leaderboard_24h|trader_leaderboard_7d|trader_leaderboard_30d|trader_spot_swaps)$")
     observed_at: Optional[str] = None
     payload: dict
 
