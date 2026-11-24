@@ -91,7 +91,7 @@ class CustomerPaperAccountRequest(BaseModel):
 class CustomerPaperTraderStartRequest(BaseModel):
     starting_capital_usd: float = Field(ge=5, le=100000000)
     profit_target_usd: float = Field(ge=1, le=100000000)
-    mode: str = Field(pattern="^(gradual|normal|aggressive)$")
+    mode: str = Field(pattern="^(gradual|normal|aggressive|ultra_aggressive)$")
 
 
 class CustomerPaperTradeRequest(BaseModel):
