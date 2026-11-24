@@ -70,9 +70,9 @@ function cleanSwaps(body) {
     "outNetworkId", "outTokenAddress", "outTradeId", "provider"
   ];
   return {
-    swaps: rows.slice(0, 50).map(row => pick(row, fields)),
+    swaps: rows.slice(0, 100).map(row => pick(row, fields)),
     has_next_page: Boolean(body?.responseObject?.hasNextPage),
-    count: Math.min(rows.length, 50)
+    count: Math.min(rows.length, 100)
   };
 }
 
@@ -121,7 +121,7 @@ async function pollFomo() {
           cursor = response.swaps?.length ? response.swaps[response.swaps.length - 1].id : null;
           if (!cursor) break;
         }
-        return { swaps: swaps.slice(0, 100), has_next_page: hasNextPage, count: Math.min(swaps.length, 100) };
+        return cleanSwaps({ responseObject: { swaps, hasNextPage } });
       }],
       ["clans_24h", async () => cleanClans(await getJson("/v2/clans/leaderboard?window=24h&limit=50"))],
       ["clans_7d", async () => cleanClans(await getJson("/v2/clans/leaderboard?window=7d&limit=50"))],
