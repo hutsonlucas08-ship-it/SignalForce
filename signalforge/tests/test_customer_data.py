@@ -139,7 +139,7 @@ def test_customer_automated_paper_traders_are_independent_and_pause_at_profit_ta
 
 
 def test_first_automated_setup_resets_legacy_manual_simulation_state():
-    from app.customer_data import place_paper_trade, start_customer_paper_trader
+    from app.customer_data import list_paper_trades, place_paper_trade, start_customer_paper_trader
     conn = connect(":memory:")
     run_migrations(conn)
     _active_account(conn, "legacy", "legacy@example.test")
@@ -151,6 +151,11 @@ def test_first_automated_setup_resets_legacy_manual_simulation_state():
     assert trader["cash_balance_usd"] == 1000
     assert trader["positions"] == []
     assert trader["auto_status"] == "running"
+    assert list_paper_trades(conn, "legacy", trader["id"]) == []
+    place_paper_trade(conn, "legacy", trader["id"], asset_id="new-mint",
+                      side="buy", amount_usd=25, price_usd=1)
+    visible = list_paper_trades(conn, "legacy", trader["id"])
+    assert len(visible) == 1 and visible[0]["asset_id"] == "new-mint"
 
 
 def test_customer_paper_worker_lease_prevents_duplicate_workers():
