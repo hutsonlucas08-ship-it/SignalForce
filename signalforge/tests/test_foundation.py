@@ -402,7 +402,7 @@ def test_dashboard_is_served_at_root():
     assert "SignalForce" in response.text
     assert "Fresh launches" in response.text
     assert "PRIVATE CUSTOMER ACCESS" in response.text
-    assert "PAPER DESK" not in response.text
+    assert "CUSTOMER PAPER DESK" in response.text
 
 
 def test_paper_accounts_start_with_separate_persistent_balances():
