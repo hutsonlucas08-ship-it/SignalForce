@@ -1,40 +1,69 @@
-# SignalForce FOMO Copilot Bridge (local Chrome extension)
+# SignalForce FOMO Copilot — local read-only bridge
 
-This bridge makes read-only FOMO API requests from the browser where you are already signed in.
-It does not click, type, sign, submit transactions, or place trades.
+This bridge runs on your Mac and reads the FOMO session from a dedicated Chrome
+remote-debugging port bound to **127.0.0.1 only**. It uses Node.js 22's built-in
+WebSocket and fetch APIs; there are no npm dependencies and no Chrome extension.
 
-## Install
+## One-time setup
 
-1. Use Chrome with the same profile for FOMO and SignalForce.
-2. Open `chrome://extensions` and enable **Developer mode**.
-3. Choose **Load unpacked** and select this `fomo_bridge` folder.
-4. Sign in to FOMO and open a page that loads your account data.
-5. Sign in to SignalForce in another tab in the same Chrome profile.
-6. The extension observes FOMO's authenticated API requests, keeps the auth header in
-   extension memory only, and polls the confirmed read-only spot-swaps and clan-leaderboard
-   endpoints once per minute.
-7. Keep both sites open in the same Chrome profile. Use the extension toolbar icon to
-   request an immediate refresh.
+1. Confirm Node.js is available: `node --version`. Version 22 or newer is required.
+2. Launch the dedicated FOMO Chrome profile on the local-only debugging port. If it
+   is already open on port 9334, leave it running. Otherwise:
 
-## Security boundary
+   ```bash
+   mkdir -p "$HOME/fomo-copilot/chrome"
+   open -na "Google Chrome" --args \
+     --user-data-dir="$HOME/fomo-copilot/chrome" \
+     --remote-debugging-address=127.0.0.1 \
+     --remote-debugging-port=9334 \
+     --new-window "https://fomo.family/r/Quickscout"
+   ```
 
-- FOMO authorization headers are held only in service-worker memory. They are never
-  written to extension storage, logs, SignalForce, or Telegram.
-- The extension uses `credentials: "omit"` for FOMO API calls and sends only allowlisted,
-  sanitized swap and clan-leaderboard fields to SignalForce.
-- SignalForce receives snapshots through the customer's same-origin HttpOnly session
-  and CSRF-protected endpoint.
-- The bridge does not request or store wallet private keys, seed phrases, or signing
-  permissions. It has no transaction submission code.
-- A failed/expired FOMO session stops polling until the browser observes a fresh
-  authenticated FOMO request.
-- All FOMO metadata is treated as untrusted data. It is rendered as text by SignalForce.
+3. Sign in to FOMO yourself in that Chrome window. Never give the bridge a password,
+   2FA code, seed phrase, or private key.
+4. Sign in to SignalForce in your normal browser and open the **FOMO Copilot** tab.
+5. Click **Generate pairing code** in SignalForce. It expires in 5 minutes.
+6. In Terminal, enter this folder and start the bridge:
 
-## Limitations
+   ```bash
+   cd signalforge/fomo_bridge
+   node bridge.js
+   ```
 
-FOMO's API is not a stable public API. If its endpoints or authentication headers change,
-the bridge will stop updating rather than guess or silently switch to another source.
-The clan leaderboard is a clan leaderboard, not an individual trader profitability
-leaderboard. The swap feed may include cross-chain or off-platform activity; network IDs,
-token addresses, and provider fields must be interpreted before treating a row as a
-Solana memecoin trade.
+7. Paste the one-time pairing code when prompted. Input is hidden. The bridge key
+   returned by SignalForce remains in process memory only; restart pairing if the
+   process exits.
+
+## What the bridge does
+
+- Connects only to the already-open FOMO tab through `127.0.0.1:9334`.
+- Observes FOMO's own network events and reads only the `Authorization: Bearer`
+  header from requests to `prod-api.fomo.family`. It never prints, logs, saves,
+  or sends that FOMO session token to SignalForce.
+- Makes GET-only requests for the user's spot swaps and the confirmed 24h, 7d and
+  30d clan leaderboards. It enforces a 1.2-second minimum gap between FOMO calls,
+  widens the gap after a 429, and refreshes the session once after a 401.
+- Sends only allowlisted swap and clan fields to the tenant-scoped SignalForce
+  snapshot endpoint. SignalForce stores only a hash of the bridge key.
+- Polls once per minute. Stop it with Ctrl+C.
+
+## Strict hands-off boundary
+
+The browser control surface has exactly four operations: `open(url)` (FOMO coin
+and profile pages only), `screenshot()`, `read_network()`, and `reload()`.
+There is no click, type, press, keyboard, mouse, DOM input, transaction, wallet,
+signing, swap, buy, sell, withdraw, or deposit operation in this bridge.
+
+FOMO auth stays on your Mac. The bridge key is separate, scoped to your SignalForce
+customer account, stored as a hash server-side, expires after 30 days, and can be
+revoked by **Clear imported data** in the FOMO Copilot tab.
+
+## Verified-source limits
+
+The spot swaps endpoint and clan leaderboard endpoints were observed returning
+successful responses in the user's FOMO session. The clan leaderboard is **not**
+the individual trader P&L leaderboard required for the planned whale-selection
+rules. The individual leaderboard endpoint and the FOMO-to-chain feed proof remain
+unverified. SignalForce must not invent individual win rates, median holds, or whale
+rankings from clan data. Cross-chain and off-platform swaps remain distinguishable
+from Solana memecoin trades.
