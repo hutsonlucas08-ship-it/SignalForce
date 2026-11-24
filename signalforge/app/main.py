@@ -450,9 +450,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """Serve the separate customer account and paper-trading workspace."""
         return FileResponse(Path(__file__).parent / "static" / "customer.html")
 
+    @app.get("/terminal", include_in_schema=False)
+    def public_terminal():
+        """Serve the public market-intelligence terminal."""
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
+
     @app.get("/", include_in_schema=False)
     def customer_home():
-        """Public product entry point; operator controls are not served to customers."""
+        """Public customer sign-in and paper-trading entry point."""
         return FileResponse(Path(__file__).parent / "static" / "customer.html")
 
     @app.get("/health")
