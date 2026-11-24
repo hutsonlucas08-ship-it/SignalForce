@@ -25,11 +25,118 @@ LIQUIDITY_RUG_DROP_PCT = 35.0
 SELL_PRESSURE_MIN_SELLS = 12
 SELL_PRESSURE_RATIO = 2.0
 MODE_RULES = {
-    "gradual": {"position_fraction": 0.03, "max_positions": 4, "min_score": 55.0, "stop_loss": -8.0, "take_profit": 25.0},
-    "normal": {"position_fraction": 0.05, "max_positions": 7, "min_score": 45.0, "stop_loss": -10.0, "take_profit": 35.0},
-    "aggressive": {"position_fraction": 0.08, "max_positions": 10, "min_score": 35.0, "stop_loss": -15.0, "take_profit": 50.0},
-    "ultra_aggressive": {"position_fraction": 0.10, "max_positions": 8, "min_score": 40.0, "stop_loss": -15.0, "take_profit": None, "partial_at": 50.0, "partial_fraction": 0.40, "trailing_fraction": 0.20},
+    "gradual": {"position_fraction": 0.03, "max_position_fraction": 0.05, "max_positions": 4, "min_score": 55.0, "stop_loss": -8.0, "partial_at": 25.0, "partial_fraction": 0.50, "trailing_fraction": 0.12, "profit_lock": 0.05},
+    "normal": {"position_fraction": 0.05, "max_position_fraction": 0.08, "max_positions": 7, "min_score": 45.0, "stop_loss": -10.0, "partial_at": 35.0, "partial_fraction": 0.40, "trailing_fraction": 0.15, "profit_lock": 0.10},
+    "aggressive": {"position_fraction": 0.08, "max_position_fraction": 0.12, "max_positions": 10, "min_score": 35.0, "stop_loss": -15.0, "partial_at": 50.0, "partial_fraction": 0.40, "trailing_fraction": 0.20, "profit_lock": 0.20},
+    "ultra_aggressive": {"position_fraction": 0.10, "max_position_fraction": 0.15, "max_positions": 8, "min_score": 40.0, "stop_loss": -15.0, "partial_at": 50.0, "partial_fraction": 0.40, "trailing_fraction": 0.20, "profit_lock": 0.20},
 }
+
+
+def _number(value, default=0.0):
+    try:
+        number = float(value)
+        return number if number == number and abs(number) != float("inf") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _runner_assessment(pair, market_score, wallet_signal=None):
+    """Score runner quality from market structure and tracked-wallet evidence."""
+    wallet_signal = wallet_signal or {}
+    liquidity = _number((pair.get("liquidity") or {}).get("usd"))
+    volume = pair.get("volume") or {}
+    txns = pair.get("txns") or {}
+    changes = pair.get("priceChange") or {}
+    m5, h1 = txns.get("m5") or {}, txns.get("h1") or {}
+    buys5, sells5 = _number(m5.get("buys")), _number(m5.get("sells"))
+    vol5, vol1 = _number(volume.get("m5")), _number(volume.get("h1"))
+    change5, change1 = _number(changes.get("m5")), _number(changes.get("h1"))
+    market_cap = _number(pair.get("marketCap") or pair.get("fdv"))
+    wallet_count = int(wallet_signal.get("wallet_count") or 0)
+    wallet_buys = int(wallet_signal.get("buy_count") or 0)
+    wallet_usd = _number(wallet_signal.get("buy_usd"))
+
+    score = float(market_score) * 0.72
+    reasons = ["market structure %.0f/100" % market_score]
+    buy_ratio = buys5 / max(1.0, buys5 + sells5)
+    if buy_ratio >= 0.75:
+        score += 5
+        reasons.append("strong 5m buy dominance")
+    elif buy_ratio >= 0.62:
+        score += 2
+        reasons.append("positive 5m buy pressure")
+    elif buy_ratio < 0.52:
+        score -= 8
+        reasons.append("weak 5m buy pressure")
+
+    acceleration = (vol5 * 12.0 / vol1) if vol1 > 0 else 0.0
+    if acceleration >= 2.0:
+        score += 8
+        reasons.append("accelerating volume")
+    elif acceleration >= 1.25:
+        score += 4
+        reasons.append("rising volume")
+    elif acceleration < 0.35:
+        score -= 5
+        reasons.append("volume fading")
+
+    if liquidity >= 100000:
+        score += 6
+        reasons.append("deep liquidity")
+    elif liquidity >= 50000:
+        score += 4
+        reasons.append("healthy liquidity")
+    elif liquidity >= 20000:
+        score += 2
+    if market_cap > 0 and liquidity > 0:
+        cap_to_liquidity = market_cap / liquidity
+        if cap_to_liquidity <= 10:
+            score += 4
+            reasons.append("market cap supported by liquidity")
+        elif cap_to_liquidity > 100:
+            score -= 8
+            reasons.append("thin liquidity versus valuation")
+
+    if 0 < change5 <= 12 and change1 > 0:
+        score += 4
+        reasons.append("constructive momentum")
+    elif change5 > 20:
+        score -= 8
+        reasons.append("late/overheated short-term move")
+    if change1 < 0:
+        score -= 5
+        reasons.append("negative hourly trend")
+
+    score += min(wallet_count * 3.0, 12.0)
+    if wallet_count:
+        reasons.append("%s tracked wallet(s) accumulating" % wallet_count)
+    if wallet_usd >= 10000:
+        score += 4
+        reasons.append("meaningful tracked-wallet buy flow")
+    elif wallet_usd >= 1000:
+        score += 2
+    if wallet_buys >= 3 and wallet_count >= 2:
+        score += 2
+        reasons.append("repeat wallet accumulation")
+
+    score = round(max(0.0, min(100.0, score)), 1)
+    tier = ("exceptional" if score >= 90 else "strong" if score >= 80
+            else "promising" if score >= 70 else "developing" if score >= 60 else "weak")
+    return {"score": score, "tier": tier, "reasons": reasons,
+            "wallet_count": wallet_count, "buy_ratio": round(buy_ratio, 3),
+            "volume_acceleration": round(acceleration, 2)}
+
+
+def _adaptive_position_amount(account, rules, runner_score, liquidity):
+    """Scale exposure with evidence, bounded by cash, equity, and pool depth."""
+    equity = _number(account.get("_equity_usd"), _number(account.get("cash_balance_usd")))
+    multiplier = (0.65 if runner_score < 60 else 0.85 if runner_score < 70
+                  else 1.0 if runner_score < 80 else 1.25 if runner_score < 90 else 1.5)
+    target_fraction = min(float(rules["max_position_fraction"]),
+                          float(rules["position_fraction"]) * multiplier)
+    liquidity_cap = _number(liquidity) * 0.01 if _number(liquidity) > 0 else 0.0
+    amount = min(_number(account.get("cash_balance_usd")), equity * target_fraction, liquidity_cap)
+    return round(max(0.0, amount), 2), multiplier
 
 
 def _equity(conn, account):
@@ -156,23 +263,27 @@ def monitor_customer_positions(conn, pairs):
             summary["stop_exits"] += 1
             continue
 
-        if pos["strategy_mode"] == "ultra_aggressive":
-            if not bool(pos.get("partial_profit_taken")) and change >= rules["partial_at"]:
-                _sell_fraction(conn, account, pos, price, rules["partial_fraction"],
-                               "Ultra Aggressive: sold 40%% at +%.1f%%; trailing remaining 60%%" % change)
-                conn.execute(
-                    "UPDATE customer_paper_positions SET partial_profit_taken=1 WHERE id=?",
-                    (pos["id"],),
-                )
-                summary["partial_exits"] += 1
-                continue
-            if bool(pos.get("partial_profit_taken")) and price <= peak * (1 - rules["trailing_fraction"]):
+        if not bool(pos.get("partial_profit_taken")) and change >= rules["partial_at"]:
+            fraction = rules["partial_fraction"]
+            _sell_fraction(conn, account, pos, price, fraction,
+                           "%s: banked %.0f%% at +%.1f%%; trailing remainder" % (
+                               pos["strategy_mode"].replace("_", " ").title(), fraction * 100, change))
+            conn.execute(
+                "UPDATE customer_paper_positions SET partial_profit_taken=1 WHERE id=?",
+                (pos["id"],),
+            )
+            summary["partial_exits"] += 1
+            continue
+        if bool(pos.get("partial_profit_taken")):
+            trail_price = max(
+                float(pos["average_entry_price"]) * (1 + rules["profit_lock"]),
+                peak * (1 - rules["trailing_fraction"]),
+            )
+            if price <= trail_price:
                 _sell(conn, account, pos, price,
-                      "Ultra Aggressive trailing exit: fell %.1f%% from peak" % ((1-price/peak)*100))
+                      "%s trailing exit: protected-profit stop triggered" %
+                      pos["strategy_mode"].replace("_", " ").title())
                 summary["take_profit_exits"] += 1
-        elif rules.get("take_profit") is not None and change >= rules["take_profit"]:
-            _sell(conn, account, pos, price, "Automatic %s take-profit" % pos["strategy_mode"])
-            summary["take_profit_exits"] += 1
 
     conn.commit()
     return summary
@@ -215,9 +326,6 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
             change = (price / float(pos["average_entry_price"]) - 1) * 100
             if change <= rules["stop_loss"]:
                 _sell(conn, account, pos, price, "Automatic " + strategy_mode + " stop-loss")
-                summary["sells"] += 1
-            elif rules.get("take_profit") is not None and change >= rules["take_profit"]:
-                _sell(conn, account, pos, price, "Automatic " + strategy_mode + " take-profit")
                 summary["sells"] += 1
         conn.commit()
         account = dict(conn.execute(
@@ -269,9 +377,6 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
 
                 signal = wallet_signals.get(mint)
                 wallet_count = int((signal or {}).get("wallet_count") or 0)
-                # Wallet buys can qualify at the selected mode threshold. Without
-                # a wallet signal, require the older engine's independent momentum
-                # threshold as well; never force a trade just to create activity.
                 required_score = rules["min_score"] if wallet_count else max(
                     rules["min_score"], MARKET_ONLY_MIN_SCORE
                 )
@@ -281,12 +386,17 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                     )
                     summary["rejection_reasons"][reason] = summary["rejection_reasons"].get(reason, 0) + 1
                     continue
-                combined = min(100.0, score + min(wallet_count * 10.0, 25.0))
-                candidates.append((combined, mint, pair, score, wallet_count))
+                assessment = _runner_assessment(pair, score, signal)
+                runner_floor = 55.0 if wallet_count else 60.0
+                if assessment["score"] < runner_floor:
+                    reason = "Runner quality below %.0f threshold" % runner_floor
+                    summary["rejection_reasons"][reason] = summary["rejection_reasons"].get(reason, 0) + 1
+                    continue
+                candidates.append((assessment["score"], mint, pair, score, wallet_count, assessment))
 
             candidates.sort(reverse=True, key=lambda item: item[0])
             if candidates:
-                _, mint, pair, score, wallet_count = candidates[0]
+                runner_score, mint, pair, score, wallet_count, assessment = candidates[0]
                 try:
                     price = float(pair.get("priceUsd"))
                 except (TypeError, ValueError):
@@ -298,24 +408,26 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                         (account["id"],),
                     ).fetchall()
                 )
-                amount = min(
-                    float(account["cash_balance_usd"]),
-                    (float(account["cash_balance_usd"]) + positions_value) * rules["position_fraction"],
+                sizing_account = dict(account)
+                sizing_account["_equity_usd"] = float(account["cash_balance_usd"]) + positions_value
+                liquidity = _number(((pair.get("liquidity") or {}).get("usd")))
+                amount, size_multiplier = _adaptive_position_amount(
+                    sizing_account, rules, runner_score, liquidity
                 )
                 if price > 0 and amount >= 1:
                     base = pair.get("baseToken") or {}
                     token_name = names.get(mint) or base.get("name") or base.get("symbol") or mint[:8]
                     source = "tracked-wallet confirmed" if wallet_count else "independent market momentum"
+                    reason_detail = "; ".join(assessment["reasons"][:3])
                     customer_data.place_paper_trade(
                         conn, account["account_id"], account["id"], asset_id=mint,
                         token_name=token_name, side="buy", amount_usd=amount, price_usd=price,
-                        reason="Automated %s entry · score %.1f · %s · %s mode" % (
-                            source, score, wallet_count and (str(wallet_count) + " tracked wallet(s)") or "no wallet signal",
-                            strategy_mode.replace("_", " ").title(),
-                        ),
+                        reason="Automated %s entry · runner %.1f/100 (%s) · market %.1f · size %.2fx · %s · %s" % (
+                            source, runner_score, assessment["tier"], score, size_multiplier,
+                            reason_detail, strategy_mode.replace("_", " ").title(),
+                        )[:200],
                         automated=True,
                     )
-                    liquidity = float(((pair.get("liquidity") or {}).get("usd")) or 0)
                     conn.execute(
                         "UPDATE customer_paper_positions SET last_price=?,peak_price=?,entry_liquidity_usd=? WHERE paper_account_id=? AND asset_id=?",
                         (price, price, liquidity, account["id"], mint),
