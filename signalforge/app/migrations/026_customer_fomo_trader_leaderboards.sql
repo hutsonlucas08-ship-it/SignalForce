@@ -10,7 +10,8 @@ CREATE TABLE customer_fomo_snapshots_new (
         'trader_leaderboard',
         'trader_leaderboard_24h',
         'trader_leaderboard_7d',
-        'trader_leaderboard_30d'
+        'trader_leaderboard_30d',
+        'trader_spot_swaps'
     )),
     payload_json TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'fomo-browser-bridge',
