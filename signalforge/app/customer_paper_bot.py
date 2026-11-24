@@ -13,6 +13,7 @@ from . import customer_data, paper_bot
 from .db import connect, utcnow
 
 log = logging.getLogger("signalforce.customer_paper_bot")
+log.setLevel(logging.INFO)
 INTERVAL_SECONDS = 30.0
 MARKET_ONLY_MIN_SCORE = 50.0
 MODE_RULES = {
