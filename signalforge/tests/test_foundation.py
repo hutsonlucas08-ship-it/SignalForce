@@ -139,6 +139,7 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "016_customer_email_verification.sql",
         "017_remove_email_verification_requirement.sql",
         "018_customer_automated_paper_trader.sql",
+        "019_customer_paper_bot_lease.sql",
         "018_customer_automated_paper_trader.sql",
     ]
     assert run_migrations(conn) == []
