@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -34,6 +34,7 @@ _bubble_cache = {}
 _launch_cache = {}
 _launch_retry_after = {}
 _callout_market_cache = {}
+_copytop_feed_cache = {"fetched_at": 0.0, "payload": None}
 
 
 class HaltRequest(BaseModel):
@@ -460,6 +461,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return {"disconnected": customer_integrations.disconnect_customer_integration(conn, session["account_id"], provider)}
         except customer_integrations.CustomerIntegrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.get("/v1/customer/fomo-copilot/provider-feed")
+    async def customer_fomo_provider_feed(session=Depends(require_customer)):
+        """Return cached, public, read-only Copy.top FOMO intelligence for this signed-in customer."""
+        cached = _copytop_feed_cache.get("payload")
+        if cached is not None and time.time() - _copytop_feed_cache["fetched_at"] < 30:
+            return {**cached, "cache_age_seconds": int(time.time() - _copytop_feed_cache["fetched_at"])}
+        payload = await copytop_feed.fetch_feed()
+        _copytop_feed_cache["fetched_at"] = time.time()
+        _copytop_feed_cache["payload"] = payload
+        return {**payload, "cache_age_seconds": 0}
 
     @app.get("/v1/customer/fomo-copilot")
     def customer_fomo_copilot(session=Depends(require_customer), conn=Depends(get_conn)):
