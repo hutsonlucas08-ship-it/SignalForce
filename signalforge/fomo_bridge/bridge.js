@@ -68,6 +68,7 @@ class ReadOnlyFomoBrowser {
     this.authHeader = null;
     this.authCapturedAt = 0;
     this.userId = null;
+    this.sessionBlocked = false;
     this.authWaiters = [];
   }
 
@@ -128,6 +129,7 @@ class ReadOnlyFomoBrowser {
     if (entry) {
       this.authHeader = entry[1];
       this.authCapturedAt = Date.now();
+      this.sessionBlocked = false;
       this.resolveAuthWaiters();
     }
   }
@@ -170,8 +172,13 @@ class ReadOnlyFomoBrowser {
 
   async refreshSession() {
     this.authHeader = null;
-    await this.reload();
-    await this.read_network();
+    try {
+      await this.reload();
+      await this.read_network();
+    } catch (error) {
+      this.sessionBlocked = true;
+      throw error;
+    }
   }
 }
 
@@ -324,6 +331,10 @@ async function pollOnce(browser) {
   if (pollRunning) return;
   pollRunning = true;
   try {
+    if (browser.sessionBlocked && !browser.authHeader) {
+      process.stdout.write("FOMO session paused. Sign in manually in the FOMO Chrome window; reads resume after a fresh authenticated request.\n");
+      return;
+    }
     if (!browser.authHeader || !browser.userId ||
         Date.now() - browser.authCapturedAt > 55 * 60 * 1000) {
       await browser.refreshSession();
