@@ -12,6 +12,7 @@ const POLL_MS = 60_000;
 const MAX_SWAP_PAGES = 4;
 const BASE_GAP_MS = 1_200;
 const MAX_GAP_MS = 20_000;
+const ALLOWED_CDP_METHODS = new Set(["Network.enable", "Page.enable", "Page.navigate", "Page.captureScreenshot", "Page.reload"]);
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let bridgeKey = "";
@@ -84,6 +85,9 @@ class ReadOnlyFomoBrowser {
   }
 
   send(method, params = {}) {
+    if (!ALLOWED_CDP_METHODS.has(method)) {
+      throw new Error("This bridge blocks all browser commands outside its read-only allowlist.");
+    }
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
