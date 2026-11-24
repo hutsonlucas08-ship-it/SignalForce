@@ -18,7 +18,7 @@ def _equity(conn, account):
 def _sell(conn, account, pos, price, reason):
  amount=float(pos["quantity"])*price
  if amount>0:
-  customer_data.place_paper_trade(conn,account["account_id"],account["id"],asset_id=pos["asset_id"],token_name=pos["token_name"],side="sell",amount_usd=amount,price_usd=price,reason=reason)
+  customer_data.place_paper_trade(conn,account["account_id"],account["id"],asset_id=pos["asset_id"],token_name=pos["token_name"],side="sell",amount_usd=amount,price_usd=price,reason=reason,automated=True)
 def process_customer_accounts(conn,pairs,wallet_signals):
  summary={"customers":0,"buys":0,"sells":0,"targets_reached":0}
  accounts=conn.execute("SELECT * FROM customer_paper_accounts WHERE enabled=1 AND auto_status='running' ORDER BY created_at").fetchall()
@@ -67,7 +67,7 @@ def process_customer_accounts(conn,pairs,wallet_signals):
     amount=min(float(account["cash_balance_usd"]), (float(account["cash_balance_usd"])+positions_value)*rules["position_fraction"])
     if price>0 and amount>=1:
      base=pair.get("baseToken") or {}
-     customer_data.place_paper_trade(conn,account["account_id"],account["id"],asset_id=mint,token_name=base.get("name") or base.get("symbol") or mint[:8],side="buy",amount_usd=amount,price_usd=price,reason="Automated shared-wallet signal · "+account["strategy_mode"].title()+" mode")
+     customer_data.place_paper_trade(conn,account["account_id"],account["id"],asset_id=mint,token_name=base.get("name") or base.get("symbol") or mint[:8],side="buy",amount_usd=amount,price_usd=price,reason="Automated shared-wallet signal · "+account["strategy_mode"].title()+" mode",automated=True)
      conn.execute("UPDATE customer_paper_positions SET last_price=? WHERE paper_account_id=? AND asset_id=?",(price,account["id"],mint)); summary["buys"]+=1
   conn.execute("UPDATE customer_paper_accounts SET last_scan_at=?,updated_at=? WHERE id=?",(utcnow(),utcnow(),account["id"]))
   conn.commit(); summary["customers"]+=1
