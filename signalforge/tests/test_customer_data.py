@@ -127,4 +127,12 @@ def test_customer_automated_paper_traders_are_independent_and_pause_at_profit_ta
     assert get_customer_paper_trader(conn, "b") is None
 
     paused = pause_customer_paper_trader(conn, "a")
-    assert paused["auto_status"] == "target_reached"
+assert paused["auto_status"] == "target_reached"
+
+    restarted = start_customer_paper_trader(conn, "a", 500, 200, "aggressive")
+    assert restarted["auto_status"] == "running"
+    assert restarted["strategy_mode"] == "aggressive"
+    assert restarted["starting_capital_usd"] == 500
+    assert restarted["cash_balance_usd"] == 500
+    assert restarted["positions"] == []
+
