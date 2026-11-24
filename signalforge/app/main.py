@@ -485,7 +485,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # solely on historical wallet observations being present in the DB.
         launch_data = await research_new_launches()
         launch_rows = launch_data.get("launches") or []
-        for launch in launch_rows:
+        for launch in (launch_rows if not launch_data.get("stale") else []):
             mint = launch.get("asset_id")
             if isinstance(mint, str) and mint and mint not in known_mints:
                 assets.append({
