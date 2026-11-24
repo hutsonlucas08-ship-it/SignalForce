@@ -73,8 +73,8 @@ async function loadPaperTrader(){
  $("traderSettings").textContent=a.strategy_mode.charAt(0).toUpperCase()+a.strategy_mode.slice(1)+" mode · Started with "+usd(a.starting_capital_usd)+" · Goal: "+usd(a.profit_target_usd)+" profit";
  $("targetLabel").textContent=usd(Math.max(0,a.profit_usd))+" of "+usd(a.profit_target_usd)+" profit target";
  $("targetProgress").style.width=Math.min(100,Math.max(0,a.target_progress_pct))+"%";
- $("pauseTrader").textContent=a.is_running?"Pause trader":"Resume / update settings";
- $("pauseTrader").disabled=a.auto_status==="target_reached";
+ $("pauseTrader").textContent=a.is_running?"Pause trader":a.auto_status==="target_reached"?"Start a new paper session":"Resume / update settings";
+ $("pauseTrader").disabled=false;
  $("positionRows").innerHTML=a.positions.length?a.positions.map(p=>'<tr><td>'+esc(p.token_name||p.asset_id)+'</td><td>'+Number(p.quantity).toFixed(6)+'</td><td>'+usd(p.average_entry_price)+'</td><td>'+usd(p.last_price||p.average_entry_price)+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">No open positions yet.</td></tr>';
  const trades=await request("/v1/customer/paper-accounts/"+encodeURIComponent(a.id)+"/trades");
  $("tradeRows").innerHTML=trades.trades.length?trades.trades.slice(0,12).map(t=>'<tr><td>'+esc(t.side.toUpperCase())+'</td><td>'+esc(t.token_name||t.asset_id)+'</td><td>'+usd(t.amount_usd)+'</td><td>'+(t.realized_pnl_usd==null?"—":usd(t.realized_pnl_usd))+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">No trades yet.</td></tr>';
