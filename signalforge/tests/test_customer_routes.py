@@ -4,7 +4,6 @@ from cryptography.fernet import Fernet
 
 from app.config import Settings
 from app.main import create_app
-from app import customer_email
 
 
 def _client():
@@ -16,18 +15,14 @@ def _client():
     return TestClient(create_app(settings), base_url="https://testserver")
 
 
-def _register_and_activate(client, email, monkeypatch):
-    tokens = {}
-    async def fake_send(address, token):
-        tokens[address] = token
-    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
+def _register_and_activate(client, email, monkeypatch=None):
     response = client.post("/v1/customer/register", json={
         "email": email, "password": "correct horse battery staple"
     })
     assert response.status_code == 201
-    assert response.json()["status"] == "pending_verification"
-    verified = client.get("/v1/customer/verify-email", params={"token": tokens[email]})
-    assert verified.status_code == 200
+    assert response.json()["status"] == "active"
+    assert response.json()["authenticated"] is True
+    assert client.get("/v1/customer/me").json()["email"] == email
 
 def _login(client, email):
     response = client.post("/v1/customer/login", json={
@@ -132,27 +127,19 @@ def test_customer_can_refresh_csrf_after_session_cookie_survives_reload(monkeypa
     assert wallet.status_code == 200
 
 
-def test_unverified_customer_cannot_sign_in_until_email_link_is_used(monkeypatch):
-    tokens = {}
-    async def fake_send(email, token):
-        tokens[email] = token
-    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
+def test_customer_registration_does_not_require_email_confirmation():
     client = _client()
     created = client.post("/v1/customer/register", json={
-        "email": "verify@example.test", "password": "correct horse battery staple"
+        "email": "instant@example.test", "password": "correct horse battery staple"
     })
     assert created.status_code == 201
-    denied = client.post("/v1/customer/login", json={
-        "email": "verify@example.test", "password": "correct horse battery staple"
-    })
-    assert denied.status_code == 403
-    assert "Verify your email" in denied.json()["detail"]
-    verified = client.get("/v1/customer/verify-email", params={"token": tokens["verify@example.test"]})
-    assert verified.status_code == 200
+    assert created.json()["authenticated"] is True
+    assert client.get("/v1/customer/me").json()["email"] == "instant@example.test"
+    # Existing login remains available after the immediate registration session ends.
+    client.post("/v1/customer/logout", headers={"X-CSRF-Token": created.json()["csrf_token"]})
     assert client.post("/v1/customer/login", json={
-        "email": "verify@example.test", "password": "correct horse battery staple"
+        "email": "instant@example.test", "password": "correct horse battery staple"
     }).status_code == 200
-
 
 def test_public_homepage_serves_customer_launch_experience():
     client = _client()
