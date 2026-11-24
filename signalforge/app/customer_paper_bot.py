@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -289,7 +291,58 @@ def monitor_customer_positions(conn, pairs):
     conn.commit()
     return summary
 
-def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
+def _recent_fomo_buy_signals(conn, lookback_minutes=10):
+    """Return fresh, Solana-address FOMO buy observations for opted-in customers.
+
+    FOMO activity is discovery context only. The normal independent market
+    quality checks still decide whether any simulated entry is allowed.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
+    rows = conn.execute(
+        """SELECT s.account_id, s.payload_json
+           FROM customer_fomo_snapshots s
+           JOIN customer_paper_accounts a ON a.account_id=s.account_id
+           WHERE s.snapshot_type='spot_swaps' AND a.enabled=1
+             AND a.auto_status='running' AND COALESCE(a.fomo_signals_enabled,0)=1"""
+    ).fetchall()
+    result = {}
+    address_pattern = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+    excluded = {"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "Es9vMFrzaCERmJfrF4H2FYD4KCoNKL7v2R7d4QfY3g6"}
+    for raw in rows:
+        account_id = raw["account_id"]
+        try:
+            swaps = (json.loads(raw["payload_json"]) or {}).get("swaps", [])
+        except (TypeError, ValueError):
+            continue
+        for swap in swaps if isinstance(swaps, list) else []:
+            if not isinstance(swap, dict) or swap.get("isOffPlatform") or swap.get("isCrossmint"):
+                continue
+            display = swap.get("display") or {}
+            side = display.get("side") if isinstance(display, dict) else display
+            if str(side or "").lower() != "buy":
+                continue
+            created = swap.get("createdAt")
+            try:
+                stamp = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+                if stamp.tzinfo is None:
+                    continue
+                age = (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds()
+            except (TypeError, ValueError):
+                continue
+            if age < -60 or age > lookback_minutes * 60:
+                continue
+            mint = swap.get("outTokenAddress")
+            if not isinstance(mint, str) or mint in excluded or not address_pattern.fullmatch(mint):
+                continue
+            result.setdefault(account_id, {})[mint] = {
+                "created_at": stamp.astimezone(timezone.utc).isoformat(),
+                "swap_id": str(swap.get("id") or "")[:128],
+            }
+    return result
+
+
+def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None, fomo_signals_by_account=None):
     """Manage exits and evaluate both wallet-confirmed and market-only entries."""
     summary = {
         "customers": 0, "buys": 0, "sells": 0, "targets_reached": 0,
@@ -378,6 +431,7 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                     continue
 
                 signal = wallet_signals.get(mint)
+                fomo_signal = (fomo_signals_by_account or {}).get(account["account_id"], {}).get(mint)
                 wallet_count = int((signal or {}).get("wallet_count") or 0)
                 required_score = rules["min_score"] if wallet_count else max(
                     rules["min_score"], MARKET_ONLY_MIN_SCORE
@@ -394,11 +448,14 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                     reason = "Runner quality below %.0f threshold" % runner_floor
                     summary["rejection_reasons"][reason] = summary["rejection_reasons"].get(reason, 0) + 1
                     continue
-                candidates.append((assessment["score"], mint, pair, score, wallet_count, assessment))
+                # FOMO is a small ranking hint only; it cannot bypass market filters or score floors.
+                candidate_rank = assessment["score"] + (2.0 if fomo_signal else 0.0)
+                candidates.append((candidate_rank, mint, pair, score, wallet_count, assessment, fomo_signal))
 
             candidates.sort(reverse=True, key=lambda item: item[0])
             if candidates:
-                runner_score, mint, pair, score, wallet_count, assessment = candidates[0]
+                _, mint, pair, score, wallet_count, assessment, fomo_signal = candidates[0]
+                runner_score = assessment["score"]
                 try:
                     price = float(pair.get("priceUsd"))
                 except (TypeError, ValueError):
@@ -419,8 +476,12 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                 if price > 0 and amount >= 1:
                     base = pair.get("baseToken") or {}
                     token_name = names.get(mint) or base.get("name") or base.get("symbol") or mint[:8]
-                    source = "tracked-wallet confirmed" if wallet_count else "independent market momentum"
+                    source = ("tracked-wallet confirmed" if wallet_count else
+                              "FOMO Copilot buy + independent market confirmation" if fomo_signal else
+                              "independent market momentum")
                     reason_detail = "; ".join(assessment["reasons"][:3])
+                    if fomo_signal:
+                        reason_detail += "; recent FOMO buy observation (discovery hint only)"
                     customer_data.place_paper_trade(
                         conn, account["account_id"], account["id"], asset_id=mint,
                         token_name=token_name, side="buy", amount_usd=amount, price_usd=price,
@@ -561,7 +622,11 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                             + [item["asset_id"] for item in launches if item.get("asset_id")]
                         ))[:180]
                         pairs = await paper_bot._fetch_pairs(client, discovered) if discovered else {}
-                        summary = process_customer_accounts(conn, pairs, signals, names)
+                        fomo_signals = _recent_fomo_buy_signals(conn)
+                        fomo_mints = [mint for account_signals in fomo_signals.values() for mint in account_signals]
+                        discovered = list(dict.fromkeys(discovered + fomo_mints))[:180]
+                        pairs = await paper_bot._fetch_pairs(client, discovered) if discovered else {}
+                        summary = process_customer_accounts(conn, pairs, signals, names, fomo_signals)
                         summary.update({
                             "discovered": len(discovered),
                             "wallet_candidates": len(signals),
