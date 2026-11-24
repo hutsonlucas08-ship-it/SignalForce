@@ -39,6 +39,11 @@ def process_customer_accounts(conn,pairs,wallet_signals):
   conn.commit()
   account=dict(conn.execute("SELECT * FROM customer_paper_accounts WHERE id=? AND account_id=?",(account["id"],account["account_id"])).fetchone())
   if _equity(conn,account)-float(account["starting_capital_usd"])>=float(account["profit_target_usd"]):
+   # Close any remaining positions at the latest available simulated mark before pausing.
+   open_positions=conn.execute("SELECT * FROM customer_paper_positions WHERE paper_account_id=?",(account["id"],)).fetchall()
+   for open_pos in open_positions:
+    pos=dict(open_pos); mark=float(pos["last_price"]) or float(pos["average_entry_price"])
+    _sell(conn,account,pos,mark,"Profit target reached · automatic paper close")
    conn.execute("UPDATE customer_paper_accounts SET enabled=0,auto_status='target_reached',updated_at=? WHERE id=? AND account_id=?",(utcnow(),account["id"],account["account_id"]))
    conn.commit(); summary["targets_reached"]+=1; continue
   count=conn.execute("SELECT COUNT(*) n FROM customer_paper_positions WHERE paper_account_id=?",(account["id"],)).fetchone()["n"]
