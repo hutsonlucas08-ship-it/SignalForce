@@ -45,3 +45,14 @@ def test_rejects_low_liquidity_and_sell_pressure():
     pressure["priceChange"]["m5"] = -10
     result = build_callouts([_asset()], [pressure])
     assert result["rejected"]["sell_pressure"] == 1
+
+
+
+def test_solana_mint_validation_excludes_quote_assets_and_non_solana_addresses():
+    from app.fomo_signals import is_solana_mint
+
+    assert is_solana_mint("TokenMint1111111111111111111111111111111111")
+    assert not is_solana_mint("So11111111111111111111111111111111111111112")
+    assert not is_solana_mint("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkGZwyTDt1v")
+    assert not is_solana_mint("0x0000000000000000000000000000000000000000")
+    assert not is_solana_mint("mint1")
