@@ -117,7 +117,7 @@ def test_customer_automated_paper_traders_are_independent_and_pause_at_profit_ta
     # take-profit rule, and reaches only tenant A's dollar profit target.
     from app.customer_data import place_paper_trade
     place_paper_trade(conn, "a", trader_a["id"], asset_id="mint-a",
-                      side="buy", amount_usd=100, price_usd=1)
+                      side="buy", amount_usd=100, price_usd=1, automated=True)
     pair = {"priceUsd": "2", "baseToken": {"name": "Token A"}}
     result = process_customer_accounts(conn, {"mint-a": pair}, {})
     assert result["sells"] == 1
@@ -154,7 +154,7 @@ def test_first_automated_setup_resets_legacy_manual_simulation_state():
     assert trader["auto_status"] == "running"
     assert list_paper_trades(conn, "legacy", trader["id"]) == []
     place_paper_trade(conn, "legacy", trader["id"], asset_id="new-mint",
-                      side="buy", amount_usd=25, price_usd=1)
+                      side="buy", amount_usd=25, price_usd=1, automated=True)
     visible = list_paper_trades(conn, "legacy", trader["id"])
     assert len(visible) == 1 and visible[0]["asset_id"] == "new-mint"
 
