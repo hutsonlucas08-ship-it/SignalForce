@@ -23,7 +23,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, telegram_alerts
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -88,6 +88,12 @@ class CustomerPaperAccountRequest(BaseModel):
     name: str = Field(default="Main Paper Account", min_length=1, max_length=80)
 
 
+class CustomerPaperTraderStartRequest(BaseModel):
+    starting_capital_usd: float = Field(ge=5, le=100000000)
+    profit_target_usd: float = Field(ge=1, le=100000000)
+    mode: str = Field(pattern="^(gradual|normal|aggressive)$")
+
+
 class CustomerPaperTradeRequest(BaseModel):
     asset_id: str = Field(min_length=1, max_length=128)
     token_name: Optional[str] = Field(default=None, max_length=100)
@@ -124,12 +130,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.paper_bot_task = None
     app.state.helius_sync_stop = asyncio.Event()
     app.state.helius_sync_task = None
+    app.state.customer_paper_bot_stop = asyncio.Event()
+    app.state.customer_paper_bot_task = None
 
     @app.on_event("startup")
     async def start_paper_bot():
         if settings.db_path != ":memory:":
             app.state.paper_bot_task = asyncio.create_task(
                 paper_bot.run_paper_bot(settings.db_path, app.state.paper_bot_stop)
+            )
+            app.state.customer_paper_bot_task = asyncio.create_task(
+                customer_paper_bot.run_customer_paper_bot(settings.db_path, settings.database_url, app.state.customer_paper_bot_stop)
             )
             if os.getenv("HELIUS_API_KEY"):
                 app.state.helius_sync_task = asyncio.create_task(
@@ -140,12 +151,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def stop_paper_bot():
         app.state.paper_bot_stop.set()
         app.state.helius_sync_stop.set()
+        app.state.customer_paper_bot_stop.set()
         helius_task = app.state.helius_sync_task
         if helius_task is not None:
             try:
                 await asyncio.wait_for(helius_task, timeout=25)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 helius_task.cancel()
+        customer_task = app.state.customer_paper_bot_task
+        if customer_task is not None:
+            try:
+                await asyncio.wait_for(customer_task, timeout=8)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                customer_task.cancel()
         task = app.state.paper_bot_task
         if task is not None:
             try:
@@ -276,6 +294,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if not customer_data.remove_wallet(conn, session["account_id"], wallet_address):
             raise HTTPException(status_code=404, detail="Wallet not found on this account")
         return {"removed": True}
+
+    @app.get("/v1/customer/paper-trader")
+    def customer_paper_trader(session=Depends(require_customer), conn=Depends(get_conn)):
+        return {"paper_trader": customer_data.get_customer_paper_trader(conn, session["account_id"])}
+
+    @app.post("/v1/customer/paper-trader/start")
+    def customer_paper_trader_start(body: CustomerPaperTraderStartRequest,
+                                    session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            return {"paper_trader": customer_data.start_customer_paper_trader(
+                conn, session["account_id"], body.starting_capital_usd,
+                body.profit_target_usd, body.mode)}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.post("/v1/customer/paper-trader/pause")
+    def customer_paper_trader_pause(session=Depends(require_customer_write), conn=Depends(get_conn)):
+        return {"paper_trader": customer_data.pause_customer_paper_trader(conn, session["account_id"])}
 
     @app.get("/v1/customer/paper-accounts")
     def customer_paper_accounts(session=Depends(require_customer), conn=Depends(get_conn)):
