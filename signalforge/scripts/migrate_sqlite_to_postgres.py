@@ -113,8 +113,8 @@ def assert_target_empty(conn):
 
 
 def clear_migration_seed_rows(conn):
-    """Remove only the two known singleton rows inserted by schema migrations."""
-    seed_tables = {"control_flags", "paper_bot_state"}
+    """Remove only known singleton rows inserted by schema migrations."""
+    seed_tables = {"control_flags", "paper_bot_state", "customer_paper_bot_state"}
     for name in target_tables(conn):
         count = conn.execute(
             sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(name))
