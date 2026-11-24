@@ -124,7 +124,10 @@ class ReadOnlyFomoBrowser {
       else this.earlyHeaders.set(params.requestId, params.headers || {});
     } else if (message.method === "Network.responseReceived") {
       const url = this.requestUrls.get(params.requestId) || params.response?.url || "";
-      if (url.startsWith(FOMO_API + "/") && /leaderboard|top.?traders|traders/i.test(url) &&
+      if (url.startsWith(FOMO_API + "/") && !/\/clans\//i.test(url) &&
+          /leaderboard|top.?traders|traders/i.test(url) &&
+          Number(params.response?.status) === 200 &&
+          /json/i.test(params.response?.mimeType || "") &&
           !this.leaderboardRequests.has(params.requestId)) {
         this.leaderboardRequests.add(params.requestId);
         this.captureTraderLeaderboard(params.requestId, url).catch(() => {});
