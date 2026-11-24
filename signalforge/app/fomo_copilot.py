@@ -37,7 +37,7 @@ def validate_snapshot(snapshot_type: str, payload: dict) -> str:
         raise FomoSnapshotError("Unsupported FOMO snapshot type")
     if not isinstance(payload, dict):
         raise FomoSnapshotError("Snapshot payload must be an object")
-    rows_key = "swaps" if snapshot_type == "spot_swaps" else "clans"
+    rows_key = "swaps" if snapshot_type == "spot_swaps" else ("traders" if snapshot_type.startswith("trader_leaderboard") else "clans")
     rows = payload.get(rows_key)
     row_limit = 100 if snapshot_type == "spot_swaps" else 50
     if not isinstance(rows, list) or len(rows) > row_limit:
