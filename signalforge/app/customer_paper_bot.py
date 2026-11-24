@@ -1,6 +1,6 @@
 """Tenant-isolated automatic paper trading driven by the shared tracked-wallet feed."""
 from __future__ import annotations
-import asyncio, logging, time
+import asyncio, logging, time, secrets
 from datetime import datetime, timedelta, timezone
 import httpx
 from . import customer_data, paper_bot
@@ -73,14 +73,34 @@ def process_customer_accounts(conn,pairs,wallet_signals):
   conn.execute("UPDATE customer_paper_accounts SET last_scan_at=?,updated_at=? WHERE id=?",(utcnow(),utcnow(),account["id"]))
   conn.commit(); summary["customers"]+=1
  return summary
+def _claim_worker_lease(conn, worker_id):
+ now=int(time.time())
+ try:
+  conn.execute("BEGIN IMMEDIATE")
+  row=conn.execute(
+   "UPDATE customer_paper_bot_state SET lock_owner=?,lock_until_epoch=? WHERE id=1 AND lock_until_epoch<? RETURNING id",
+   (worker_id,now+180,now),
+  ).fetchone()
+  conn.commit()
+  return row is not None
+ except Exception:
+  conn.rollback()
+  raise
+
+def _release_worker_lease(conn, worker_id):
+ conn.execute("UPDATE customer_paper_bot_state SET lock_owner=NULL,lock_until_epoch=0 WHERE id=1 AND lock_owner=?",(worker_id,))
+ conn.commit()
+
 async def run_customer_paper_bot(db_path,database_url,stop_event):
+ worker_id=secrets.token_urlsafe(16)
  async with httpx.AsyncClient(timeout=10.0,headers={"Accept":"application/json"}) as client:
   while not stop_event.is_set():
-   started=time.monotonic(); conn=None
+   started=time.monotonic(); conn=None; owns_lease=False
    try:
     conn=connect(db_path,database_url)
     enabled=conn.execute("SELECT 1 FROM customer_paper_accounts WHERE enabled=1 AND auto_status='running' LIMIT 1").fetchone()
-    if enabled:
+    if enabled and _claim_worker_lease(conn,worker_id):
+     owns_lease=True
      assets=scan_assets(conn,100); signals=paper_bot._recent_wallet_buy_signals(conn)
      held=[r["asset_id"] for r in conn.execute("SELECT DISTINCT asset_id FROM customer_paper_positions").fetchall()]
      mints=list(dict.fromkeys(held+list(signals.keys())+[a["asset_id"] for a in assets if a.get("asset_id")]))[:180]
@@ -89,6 +109,10 @@ async def run_customer_paper_bot(db_path,database_url,stop_event):
    except asyncio.CancelledError: raise
    except Exception: log.exception("Customer paper trader scan failed")
    finally:
-    if conn is not None: conn.close()
+    if conn is not None:
+     if owns_lease:
+      try: _release_worker_lease(conn,worker_id)
+      except Exception: log.exception("Could not release customer paper worker lease")
+     conn.close()
    try: await asyncio.wait_for(stop_event.wait(),timeout=max(0.0,INTERVAL_SECONDS-(time.monotonic()-started)))
    except asyncio.TimeoutError: pass
