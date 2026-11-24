@@ -130,8 +130,12 @@ class ReadOnlyFomoBrowser {
           /json/i.test(params.response?.mimeType || "") &&
           !this.leaderboardRequests.has(params.requestId)) {
         this.leaderboardRequests.add(params.requestId);
-        this.captureTraderLeaderboard(params.requestId, url).catch(() => {});
       }
+    } else if (message.method === "Network.loadingFinished" &&
+               this.leaderboardRequests.has(params.requestId)) {
+      this.leaderboardRequests.delete(params.requestId);
+      const url = this.requestUrls.get(params.requestId) || "";
+      this.captureTraderLeaderboard(params.requestId, url).catch(() => {});
     }
   }
 
