@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from . import customer_data, paper_bot
 from .db import connect, utcnow
-from .research import scan_assets
 log = logging.getLogger("signalforce.customer_paper_bot")
 INTERVAL_SECONDS = 30.0
 MODE_RULES = {
@@ -101,9 +100,9 @@ async def run_customer_paper_bot(db_path,database_url,stop_event):
     enabled=conn.execute("SELECT 1 FROM customer_paper_accounts WHERE enabled=1 AND auto_status='running' LIMIT 1").fetchone()
     if enabled and _claim_worker_lease(conn,worker_id):
      owns_lease=True
-     assets=scan_assets(conn,100); signals=paper_bot._recent_wallet_buy_signals(conn)
+     signals=paper_bot._recent_wallet_buy_signals(conn)
      held=[r["asset_id"] for r in conn.execute("SELECT DISTINCT asset_id FROM customer_paper_positions").fetchall()]
-     mints=list(dict.fromkeys(held+list(signals.keys())+[a["asset_id"] for a in assets if a.get("asset_id")]))[:180]
+     mints=list(dict.fromkeys(held+list(signals.keys())))[:180]
      pairs=await paper_bot._fetch_pairs(client,mints) if mints else {}
      log.info("Customer paper scan: %s",process_customer_accounts(conn,pairs,signals))
    except asyncio.CancelledError: raise
