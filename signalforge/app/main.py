@@ -480,10 +480,67 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
 
     async def _customer_callout_data(account_id, conn, limit):
+        snapshots = fomo_copilot.list_snapshots(conn, account_id)
+        trader_activity_snapshot = next(
+            (item for item in snapshots if item["snapshot_type"] == "trader_spot_swaps"),
+            None,
+        )
+        trader_activity_rows = (
+            (trader_activity_snapshot or {}).get("payload", {}).get("traders") or []
+        )
+        fresh_trader_buys = {}
+        now = datetime.now(timezone.utc)
+        for trader in trader_activity_rows:
+            if not isinstance(trader, dict):
+                continue
+            handle = str(trader.get("handle") or "FOMO trader")[:80]
+            for swap in trader.get("swaps") or []:
+                if not isinstance(swap, dict) or swap.get("isCrossmint") or swap.get("isOffPlatform"):
+                    continue
+                display = swap.get("display")
+                side = display.get("side") if isinstance(display, dict) else display
+                if not isinstance(side, str) or side.lower() != "buy":
+                    continue
+                mint = swap.get("outTokenAddress")
+                created_at = swap.get("createdAt")
+                if not isinstance(mint, str) or not mint or not isinstance(created_at, str):
+                    continue
+                try:
+                    parsed_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    if parsed_at.tzinfo is None:
+                        continue
+                    age_seconds = (now - parsed_at.astimezone(timezone.utc)).total_seconds()
+                except ValueError:
+                    continue
+                if age_seconds < 0 or age_seconds > 600:
+                    continue
+                activity = fresh_trader_buys.setdefault(mint, {
+                    "buy_count": 0,
+                    "traders": [],
+                    "latest_buy_at": None,
+                    "verification": "fomo_leaderboard_qualified_not_chain_verified",
+                })
+                activity["buy_count"] += 1
+                if handle not in activity["traders"]:
+                    activity["traders"].append(handle)
+                if activity["latest_buy_at"] is None or created_at > activity["latest_buy_at"]:
+                    activity["latest_buy_at"] = created_at
+
         assets = scan_assets(conn, limit)
         known_mints = {item.get("asset_id") for item in assets}
-        # Add newly created public Solana pools so the scanner does not depend
-        # solely on historical wallet observations being present in the DB.
+        # Recent buys from strictly qualified FOMO leaderboard accounts become
+        # discovery candidates; the swap feed itself is not treated as chain proof.
+        for mint, activity in fresh_trader_buys.items():
+            if mint not in known_mints:
+                assets.append({
+                    "asset_id": mint,
+                    "token_name": mint[:8],
+                    "latest_collected_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "discovery_source": "recent FOMO-qualified trader buy",
+                })
+                known_mints.add(mint)
+        # Add newly created public Solana pools so discovery does not depend only
+        # on historical wallet observations or FOMO trader activity.
         launch_data = await research_new_launches()
         launch_rows = launch_data.get("launches") or []
         for launch in (launch_rows if not launch_data.get("stale") else []):
@@ -525,7 +582,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 _callout_market_cache.pop(oldest_key, None)
         result = fomo_signals.build_callouts(assets, pairs)
         result["gecko_terminal_new_pools_seen"] = len(launch_rows)
-        snapshots = fomo_copilot.list_snapshots(conn, account_id)
         spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
         swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
         own_activity = {}
@@ -550,6 +606,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             activity = own_activity.get(item["asset_id"])
             if activity:
                 item["your_fomo_activity"] = activity
+            trader_activity = fresh_trader_buys.get(item["asset_id"])
+            if trader_activity:
+                item["qualified_trader_activity"] = trader_activity
+                item["reasons"].append(
+                    str(trader_activity["buy_count"]) + " recent buy(s) from leaderboard-qualified FOMO trader(s)"
+                )
         trader_snapshots = [
             item for item in snapshots
             if item["snapshot_type"].startswith("trader_leaderboard")
@@ -572,7 +634,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 for item in trader_snapshots
             ),
             "leaderboard_qualified_traders": whale_gate["qualified_count"],
-            "interpretation": "Your imported swaps are personal account history. Trader leaderboard rows are captured from FOMO's page but still require performance and identity validation before whale signals can be generated.",
+            "qualified_trader_swap_snapshot": bool(trader_activity_snapshot),
+            "qualified_trader_swap_rows": len(trader_activity_rows),
+            "fresh_qualified_trader_buys": sum(item["buy_count"] for item in fresh_trader_buys.values()),
+            "interpretation": "Your imported swaps are personal account history. Recent buys are from FOMO leaderboard-qualified accounts, but are not independently chain-verified and are not guaranteed to be profitable.",
         }
         return result
 
