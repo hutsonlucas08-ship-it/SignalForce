@@ -112,6 +112,7 @@ def test_local_bridge_exposes_no_dom_input_or_wallet_signing_surface():
     assert 'this.send(pagestate, "page.reload"' in source
     assert "allowed_cdp_methods" in source
     assert "if (!allowed_cdp_methods.has(method))" in source
+    assert '"signature", "txhash", "transactionhash"' in source
 
 
 def test_fomo_paper_signal_setting_is_opt_in_and_tenant_scoped():
