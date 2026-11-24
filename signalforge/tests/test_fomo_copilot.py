@@ -107,7 +107,8 @@ def test_local_bridge_exposes_no_dom_input_or_wallet_signing_surface():
     ]
     for pattern in forbidden:
         assert pattern not in source
-    assert 'this.send("network.enable")' in source
+    # Network observation is attached to each FOMO page/service-worker target.
+    assert 'this.send(state, "network.enable")' in source
     assert 'this.send("page.reload"' in source
     assert "allowed_cdp_methods" in source
     assert "if (!allowed_cdp_methods.has(method))" in source
