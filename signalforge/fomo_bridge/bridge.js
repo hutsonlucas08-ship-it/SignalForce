@@ -171,7 +171,7 @@ class ReadOnlyFomoBrowser {
           ...pick(row, [
             "rank", "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct",
             "winRate", "totalTrades", "numTrades", "swapCount", "totalVolume",
-            "volumeUsd", "followers", "verified", "userId", "user_id", "userHandle", "handle", "username", "displayName", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
+            "volumeUsd", "followers", "verified", "userId", "user_id", "userHandle", "handle", "username", "displayName", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare", "pnl_usd", "win_rate", "total_trades", "median_hold_minutes", "median_hold_seconds", "max_single_token_pnl_share"
           ]),
           user: pick(user, [
             "id", "userId", "user_id", "userHandle", "handle", "username", "displayName", "followers",
@@ -179,7 +179,7 @@ class ReadOnlyFomoBrowser {
           ]),
           stats: pick(stats, [
             "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct", "winRate",
-            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
+            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare", "pnl_usd", "win_rate", "total_trades", "median_hold_minutes", "median_hold_seconds", "max_single_token_pnl_share"
           ])
         };
         return clean;
