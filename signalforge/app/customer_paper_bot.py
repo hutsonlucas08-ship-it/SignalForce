@@ -227,7 +227,7 @@ def _release_worker_lease(conn, worker_id):
 
 async def run_customer_paper_bot(db_path, database_url, stop_event):
     worker_id = secrets.token_urlsafe(16)
-    log.info("Customer paper trader worker started; scan interval=%ss", INTERVAL_SECONDS)
+    log.warning("Customer paper trader worker started; scan interval=%ss", INTERVAL_SECONDS)
     async with httpx.AsyncClient(timeout=10.0, headers={"Accept": "application/json"}) as client:
         while not stop_event.is_set():
             started = time.monotonic()
