@@ -520,6 +520,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     except (httpx.HTTPError, ValueError):
                         log.warning("Customer callout market-data request failed")
             _callout_market_cache[cache_key] = (time.time(), pairs)
+            if len(_callout_market_cache) > 64:
+                oldest_key = min(_callout_market_cache, key=lambda key: _callout_market_cache[key][0])
+                _callout_market_cache.pop(oldest_key, None)
         result = fomo_signals.build_callouts(assets, pairs)
         result["gecko_terminal_new_pools_seen"] = len(launch_rows)
         snapshots = fomo_copilot.list_snapshots(conn, account_id)
@@ -618,7 +621,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     "https://api.telegram.org/bot" + credentials["bot_token"] + "/sendMessage",
                     json={"chat_id": credentials["chat_id"], "text": "\n".join(lines)[:3900]},
                 )
-                payload = response.json()
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
                 if not response.is_success or not payload.get("ok"):
                     raise HTTPException(status_code=502, detail="Telegram did not accept the callout message.")
         except httpx.HTTPError:
