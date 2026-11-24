@@ -84,7 +84,8 @@ def _normalize_trade(row: dict) -> dict:
 
 
 def _normalize_hot(row: dict) -> dict:
-    traders = row.get("traders") if isinstance(row.get("traders"), list) else []
+    traders = _first(row, "traders", "buyers", "firstBuyers", "first_buyers", default=[])
+    traders = traders if isinstance(traders, list) else []
     handles = []
     for trader in traders[:20]:
         handle = trader if isinstance(trader, str) else (_handle(trader) if isinstance(trader, dict) else None)
@@ -98,12 +99,12 @@ def _normalize_hot(row: dict) -> dict:
         "chain": _first(row, "chain", "chainId"),
         "platform": platform,
         "platform_scope": "fomo" if str(platform).lower() == "fomo" else "provider aggregate; platform scope not confirmed",
-        "trader_count": _first(row, "traderCount", "tradersCount", "uniqueTraders", "unique_traders", default=len(handles)),
+        "trader_count": _first(row, "traderCount", "tradersCount", "uniqueTraders", "unique_traders", "buyersCount", "topTraderCount", "top_traders_count", default=len(handles)),
         "traders": handles,
-        "bought_usd": _first(row, "boughtUsd", "buyUsd", "buy_usd", "totalBoughtUsd"),
-        "sold_usd": _first(row, "soldUsd", "sellUsd", "sell_usd", "totalSoldUsd"),
+        "bought_usd": _first(row, "boughtUsd", "buyUsd", "buy_usd", "totalBoughtUsd", "total_bought_usd", "dollarsBought"),
+        "sold_usd": _first(row, "soldUsd", "sellUsd", "sell_usd", "totalSoldUsd", "total_sold_usd", "dollarsSold"),
         "market_cap_usd": _first(row, "marketCapUsd", "market_cap_usd", "mcap"),
-        "minutes_since_first_buy": _first(row, "minutesSinceFirstBuy", "minutes_since_first_buy"),
+        "minutes_since_first_buy": _first(row, "minutesSinceFirstBuy", "minutes_since_first_buy", "firstBuyMinutesAgo"),
         "attention_score": _first(row, "score", "index", "attention"),
     }
 
@@ -154,7 +155,8 @@ async def fetch_feed() -> dict:
         _alert_cursor = alert_cursor
     alerts = []
     for row in _rows(alert_payload, "alerts", "events", "items", "results"):
-        trader_rows = row.get("traders") if isinstance(row.get("traders"), list) else []
+        trader_rows = _first(row, "traders", "topTraders", "top_traders", default=[])
+        trader_rows = trader_rows if isinstance(trader_rows, list) else []
         handles_in_alert = []
         for trader in trader_rows[:20]:
             handle = trader if isinstance(trader, str) else (_handle(trader) if isinstance(trader, dict) else None)
@@ -162,12 +164,12 @@ async def fetch_feed() -> dict:
                 handles_in_alert.append(handle)
         coin = row.get("coin") if isinstance(row.get("coin"), dict) else {}
         alerts.append({
-            "kind": _first(row, "kind", "type", "event"),
+            "kind": _first(row, "kind", "type", "event", "event_type"),
             "symbol": _first(row, "symbol", "ticker", default=_first(coin, "symbol", "ticker", default="?")),
             "name": _first(row, "name", "tokenName", default=coin.get("name")),
             "mint": _first(row, "address", "mint", "tokenAddress", default=_first(coin, "address", "mint")),
             "chain": _first(row, "chain", "chainId", default=coin.get("chain")),
-            "trader_count": _first(row, "traderCount", "topTraderCount", "traders_count", default=len(handles_in_alert)),
+            "trader_count": _first(row, "traderCount", "topTraderCount", "traders_count", "top_traders_count", default=len(handles_in_alert)),
             "traders": handles_in_alert,
             "amount_usd": _first(row, "amountUsd", "amount_usd", "usd", "valueUsd"),
             "timestamp": _first(row, "timestamp", "createdAt", "created_at", "time"),
