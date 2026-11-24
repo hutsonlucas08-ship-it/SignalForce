@@ -127,6 +127,12 @@ td{color:#dce7ed}
    </div>
   </div>
   <div class="card" style="margin-top:12px">
+   <div class="head"><div><div class="eyebrow">PAPER TRADER INTEGRATION</div><h2>Use recent FOMO buys as discovery hints</h2><p>Optional and off by default. A recent FOMO buy can add its Solana token to the paper trader's candidate list, but the normal liquidity, volume, momentum and risk filters must still pass. FOMO sells are not copied.</p></div></div>
+   <label style="display:flex;gap:10px;align-items:center"><input id="fomoPaperEnabled" type="checkbox" style="width:18px;height:18px" disabled><span>Enable FOMO buy observations for my paper trader</span></label>
+   <div class="actions" style="margin-top:10px"><button class="btn primary" id="saveFomoPaperSettings" type="button" disabled>Save paper-trader setting</button></div>
+   <p class="small" id="fomoPaperSettingNote">Start your paper trader first. This setting never enables real-money execution.</p>
+  </div>
+  <div class="card" style="margin-top:12px">
    <div class="head"><div><div class="eyebrow">LATEST IMPORTS</div><h2>FOMO snapshots</h2><p>Source and observation time are shown for every snapshot.</p></div></div>
    <div id="fomoSnapshotList"><div class="empty">No FOMO data imported yet. Install and activate the local browser bridge.</div></div>
   </div>
@@ -178,6 +184,14 @@ async function loadFomoCopilot(){
  const status=$("fomoConnectionStatus"),host=$("fomoSnapshotList");
  try{
   const data=await request("/v1/customer/fomo-copilot");
+  const paperData=await request("/v1/customer/paper-trader").catch(()=>({paper_trader:null}));
+  const paperAccount=paperData.paper_trader;
+  $("fomoPaperEnabled").disabled=!paperAccount;
+  $("saveFomoPaperSettings").disabled=!paperAccount;
+  $("fomoPaperEnabled").checked=!!(paperAccount&&paperAccount.fomo_signals_enabled);
+  $("fomoPaperSettingNote").textContent=paperAccount
+    ?"When enabled, only fresh FOMO buys from the last 10 minutes are considered. Market checks still apply; no FOMO order is copied directly."
+    :"Start your paper trader first. This setting never enables real-money execution.";
   status.textContent=data.connected
    ?"CONNECTED · "+data.snapshot_count+" FOMO feeds received · "+(data.bridge_paired?"local bridge paired":"bridge key not paired")+" · Read-only / manual execution"
    :(data.bridge_paired?"BRIDGE PAIRED · Waiting for the first FOMO snapshot.":"NOT CONNECTED · Start the local Node bridge below.");
@@ -208,6 +222,13 @@ $("generateFomoPairing").onclick=async()=>{
   $("fomoPairingCodeValue").textContent=data.pairing_code;
   $("fomoPairingCode").classList.remove("hidden");
  }catch(error){$("fomoConnectionStatus").textContent=error.message;$("fomoConnectionStatus").classList.add("error");}
+ finally{button.disabled=false;}
+};
+$("saveFomoPaperSettings").onclick=async()=>{
+ const button=$("saveFomoPaperSettings");button.disabled=true;
+ try{const data=await request("/v1/customer/paper-trader/fomo-signals",{method:"POST",body:JSON.stringify({enabled:$("fomoPaperEnabled").checked})});
+  $("fomoPaperSettingNote").textContent=data.fomo_signals_enabled?"FOMO buy observations enabled for paper-only discovery. Market filters remain mandatory.":"FOMO buy observations disabled.";
+ }catch(error){$("fomoPaperSettingNote").textContent=error.message;}
  finally{button.disabled=false;}
 };
 $("refreshFomo").onclick=loadFomoCopilot;
