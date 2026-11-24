@@ -512,7 +512,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     age_seconds = (now - parsed_at.astimezone(timezone.utc)).total_seconds()
                 except ValueError:
                     continue
-                if age_seconds < 0 or age_seconds > 600:
+                if age_seconds < 0 or age_seconds > 300:
                     continue
                 activity = fresh_trader_buys.setdefault(mint, {
                     "buy_count": 0,
@@ -532,10 +532,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # discovery candidates; the swap feed itself is not treated as chain proof.
         for mint, activity in fresh_trader_buys.items():
             if mint not in known_mints:
+                latest_buy = datetime.fromisoformat(
+                    activity["latest_buy_at"].replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
                 assets.append({
                     "asset_id": mint,
                     "token_name": mint[:8],
-                    "latest_collected_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "latest_collected_at": latest_buy.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "discovery_source": "recent FOMO-qualified trader buy",
                 })
                 known_mints.add(mint)
