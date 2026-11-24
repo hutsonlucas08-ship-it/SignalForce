@@ -384,7 +384,7 @@ def test_sqlite_to_postgres_data_transfer_round_trip(tmp_path):
 
 
 def test_postgres_customer_automated_paper_traders_are_isolated_and_leased(postgres_connection):
-    from app.customer_data import get_customer_paper_trader, start_customer_paper_trader
+    from app.customer_data import get_customer_paper_trader, pause_customer_paper_trader, start_customer_paper_trader
     from app.customer_paper_bot import (
         _claim_worker_lease, _release_worker_lease, process_customer_accounts,
     )
@@ -400,6 +400,14 @@ def test_postgres_customer_automated_paper_traders_are_isolated_and_leased(postg
     trader_b = start_customer_paper_trader(conn, account_b, 2500, 750, "aggressive")
     assert trader_a["cash_balance_usd"] == 1000
     assert trader_b["cash_balance_usd"] == 2500
+
+    pause_customer_paper_trader(conn, account_a)
+    with pytest.raises(CustomerDataError):
+        place_paper_trade(
+            conn, account_a, trader_a["id"], asset_id="paused-mint",
+            side="buy", amount_usd=10, price_usd=1, automated=True,
+        )
+    trader_a = start_customer_paper_trader(conn, account_a, 1000, 100, "gradual")
 
     place_paper_trade(
         conn, account_a, trader_a["id"], asset_id="postgres-paper-mint",
