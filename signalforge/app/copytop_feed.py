@@ -4,6 +4,8 @@ from typing import Any
 import httpx
 
 BASE_URL = "https://copy.top/v1"
+_trade_cursor = None
+_alert_cursor = None
 
 
 def _rows(payload: Any, *keys: str) -> list[dict]:
@@ -119,17 +121,24 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict):
 
 
 async def fetch_feed() -> dict:
-    """Fetch FOMO leaderboard, trades from those handles, and clearly scoped hot-coin context."""
+    """Fetch FOMO leaderboard, watchlist tape, confluence alerts and hot-coin context."""
+    global _trade_cursor, _alert_cursor
     async with httpx.AsyncClient(timeout=8.0) as client:
         lb_payload, lb_error = await _get(client, "/traders", {"platform": "fomo", "window": "7d", "sort": "realized", "limit": 20})
         lb_rows = _rows(lb_payload, "traders", "items", "results", "leaderboard")
         leaderboard = [_normalize_trader(row) for row in lb_rows]
         handles = list(dict.fromkeys(x["handle"] for x in leaderboard if x["handle"] != "Unknown trader"))[:20]
         if handles:
-            trade_payload, trade_error = await _get(client, "/trades", {"traders": ",".join(handles), "limit": 30})
+            trade_params = {"traders": ",".join(handles), "limit": 30}
+            if _trade_cursor:
+                trade_params["since"] = _trade_cursor
+            trade_payload, trade_error = await _get(client, "/trades", trade_params)
         else:
             trade_payload, trade_error = {}, "No FOMO leaderboard handles available."
         hot_payload, hot_error = await _get(client, "/coins/hot", {"window": "1h", "limit": 15})
+    trade_cursor = _first(trade_payload, "cursor", "nextCursor", "next_cursor") if isinstance(trade_payload, dict) else None
+    if isinstance(trade_cursor, str) and trade_cursor:
+        _trade_cursor = trade_cursor
     trades = [_normalize_trade(x) for x in _rows(trade_payload, "trades", "items", "results")]
     # The live-trade request is scoped to the FOMO leaderboard handles. If the
     # provider labels platform, exclude rows explicitly marked as another platform.
@@ -138,8 +147,11 @@ async def fetch_feed() -> dict:
     async with httpx.AsyncClient(timeout=8.0) as client:
         alert_payload, alert_error = await _get(
             client, "/alerts",
-            {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 20},
+            {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 20, **({"since": _alert_cursor} if _alert_cursor else {})},
         )
+    alert_cursor = _first(alert_payload, "cursor", "nextCursor", "next_cursor") if isinstance(alert_payload, dict) else None
+    if isinstance(alert_cursor, str) and alert_cursor:
+        _alert_cursor = alert_cursor
     alerts = []
     for row in _rows(alert_payload, "alerts", "events", "items", "results"):
         trader_rows = row.get("traders") if isinstance(row.get("traders"), list) else []
