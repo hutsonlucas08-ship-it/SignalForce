@@ -128,7 +128,7 @@ def list_paper_trades(conn: sqlite3.Connection, account_id: str, paper_account_i
                   t.realized_pnl_usd,t.reason,t.created_at
            FROM customer_paper_trades t
            JOIN customer_paper_accounts a ON a.id=t.paper_account_id
-           WHERE a.account_id=? AND a.id=? AND (a.auto_started_at IS NULL OR t.created_at>=a.auto_started_at) ORDER BY t.created_at DESC,t.id DESC LIMIT ?""",
+           WHERE a.account_id=? AND a.id=? AND (a.auto_session_id IS NULL OR t.paper_session_id=a.auto_session_id) ORDER BY t.created_at DESC,t.id DESC LIMIT ?""",
         (account_id, paper_account_id, limit),
     ).fetchall()
     return [dict(row) for row in rows]
@@ -154,7 +154,7 @@ def place_paper_trade(
     if not isinstance(reason, str) or not reason.strip() or len(reason) > 200:
         raise CustomerDataError("Trade reason must be 1–200 characters.")
     account = conn.execute(
-        """SELECT id,cash_balance_usd FROM customer_paper_accounts
+        """SELECT id,cash_balance_usd,auto_session_id FROM customer_paper_accounts
            WHERE id=? AND account_id=?""",
         (paper_account_id, account_id),
     ).fetchone()
@@ -206,10 +206,10 @@ def place_paper_trade(
     )
     cursor = conn.execute(
         """INSERT INTO customer_paper_trades
-           (paper_account_id,asset_id,token_name,side,quantity,price_usd,amount_usd,realized_pnl_usd,reason,created_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id""",
+           (paper_account_id,asset_id,token_name,side,quantity,price_usd,amount_usd,realized_pnl_usd,reason,paper_session_id,created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?) RETURNING id""",
         (paper_account_id, asset_id.strip(), token_name, side, quantity, float(price_usd),
-         float(amount_usd), realized, reason.strip(), now),
+         float(amount_usd), realized, reason.strip(), account["auto_session_id"], now),
     )
     trade_id = cursor.fetchone()["id"]
     conn.commit()
@@ -254,13 +254,14 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
         raise CustomerDataError("Customer account is not active.")
     existing = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
     now = utcnow()
+    session_id = secrets.token_urlsafe(18)
     if existing is None:
         paper_id = secrets.token_urlsafe(18)
         conn.execute(
             """INSERT INTO customer_paper_accounts
-               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,profit_target_usd,auto_status,auto_started_at,created_at,updated_at)
+               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,profit_target_usd,auto_status,auto_session_id,created_at,updated_at)
                VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,'running',?,?,?)""",
-            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, now, now),
+            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), session_id, now, now),
         )
     else:
         paper_id = existing["id"]
@@ -268,8 +269,8 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
             conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
             conn.execute(
                 """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,
-                   profit_target_usd=?,enabled=1,auto_status='running',auto_started_at=?,updated_at=? WHERE id=? AND account_id=?""",
-                (float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, now, paper_id, account_id),
+                   profit_target_usd=?,enabled=1,auto_status='running',auto_session_id=?,updated_at=? WHERE id=? AND account_id=?""",
+                (float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), session_id, now, paper_id, account_id),
             )
         else:
             trade_count = conn.execute("SELECT COUNT(*) FROM customer_paper_trades WHERE paper_account_id=?", (paper_id,)).fetchone()[0]
