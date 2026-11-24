@@ -480,6 +480,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     async def _customer_callout_data(account_id, conn, limit):
         assets = scan_assets(conn, limit)
+        known_mints = {item.get("asset_id") for item in assets}
+        # Add newly created public Solana pools so the scanner does not depend
+        # solely on historical wallet observations being present in the DB.
+        launch_data = await research_new_launches()
+        launch_rows = launch_data.get("launches") or []
+        for launch in launch_rows:
+            mint = launch.get("asset_id")
+            if isinstance(mint, str) and mint and mint not in known_mints:
+                assets.append({
+                    "asset_id": mint,
+                    "token_name": launch.get("name") or launch.get("symbol") or mint[:8],
+                    "latest_collected_at": utcnow(),
+                    "discovery_source": "GeckoTerminal new pools",
+                })
+                known_mints.add(mint)
         mints = [item["asset_id"] for item in assets if isinstance(item.get("asset_id"), str)]
         pairs = []
         async with httpx.AsyncClient(timeout=6.0) as client:
@@ -499,6 +514,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 except (httpx.HTTPError, ValueError):
                     log.warning("Customer callout market-data request failed")
         result = fomo_signals.build_callouts(assets, pairs)
+        result["gecko_terminal_new_pools_seen"] = len(launch_rows)
         snapshots = fomo_copilot.list_snapshots(conn, account_id)
         spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
         swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
