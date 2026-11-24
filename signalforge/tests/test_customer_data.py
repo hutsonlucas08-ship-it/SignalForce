@@ -151,3 +151,15 @@ def test_first_automated_setup_resets_legacy_manual_simulation_state():
     assert trader["cash_balance_usd"] == 1000
     assert trader["positions"] == []
     assert trader["auto_status"] == "running"
+
+
+def test_customer_paper_worker_lease_prevents_duplicate_workers():
+    from app.customer_paper_bot import _claim_worker_lease, _release_worker_lease
+    conn = connect(":memory:")
+    run_migrations(conn)
+    assert _claim_worker_lease(conn, "worker-a") is True
+    assert _claim_worker_lease(conn, "worker-b") is False
+    _release_worker_lease(conn, "worker-a")
+    assert _claim_worker_lease(conn, "worker-b") is True
+    _release_worker_lease(conn, "worker-b")
+    conn.close()
