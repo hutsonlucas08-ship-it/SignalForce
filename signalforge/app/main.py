@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -33,6 +33,7 @@ _price_history = {}
 _bubble_cache = {}
 _launch_cache = {}
 _launch_retry_after = {}
+_callout_market_cache = {}
 
 
 class HaltRequest(BaseModel):
@@ -117,7 +118,7 @@ class CustomerProviderRequest(BaseModel):
 
 
 class CustomerFomoSnapshotRequest(BaseModel):
-    snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d)$")
+    snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d|trader_leaderboard|trader_leaderboard_24h|trader_leaderboard_7d|trader_leaderboard_30d|trader_spot_swaps)$")
     observed_at: Optional[str] = None
     payload: dict
 
@@ -478,6 +479,240 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "execution_enabled": False,
         }
 
+    async def _customer_callout_data(account_id, conn, limit):
+        snapshots = fomo_copilot.list_snapshots(conn, account_id)
+        trader_activity_snapshot = next(
+            (item for item in snapshots if item["snapshot_type"] == "trader_spot_swaps"),
+            None,
+        )
+        trader_activity_rows = (
+            (trader_activity_snapshot or {}).get("payload", {}).get("traders") or []
+        )
+        fresh_trader_buys = {}
+        now = datetime.now(timezone.utc)
+        for trader in trader_activity_rows:
+            if not isinstance(trader, dict):
+                continue
+            handle = str(trader.get("handle") or "FOMO trader")[:80]
+            for swap in trader.get("swaps") or []:
+                if not isinstance(swap, dict) or swap.get("isCrossmint") or swap.get("isOffPlatform"):
+                    continue
+                display = swap.get("display")
+                side = display.get("side") if isinstance(display, dict) else display
+                if not isinstance(side, str) or side.lower() != "buy":
+                    continue
+                mint = swap.get("outTokenAddress")
+                created_at = swap.get("createdAt")
+                if not fomo_signals.is_solana_mint(mint) or not isinstance(created_at, str):
+                    continue
+                try:
+                    parsed_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    if parsed_at.tzinfo is None:
+                        continue
+                    age_seconds = (now - parsed_at.astimezone(timezone.utc)).total_seconds()
+                except ValueError:
+                    continue
+                if age_seconds < 0 or age_seconds > 300:
+                    continue
+                created_at_utc = parsed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                activity = fresh_trader_buys.setdefault(mint, {
+                    "buy_count": 0,
+                    "traders": [],
+                    "latest_buy_at": None,
+                    "verification": "fomo_leaderboard_qualified_not_chain_verified",
+                })
+                activity["buy_count"] += 1
+                if handle not in activity["traders"]:
+                    activity["traders"].append(handle)
+                if activity["latest_buy_at"] is None or created_at_utc > activity["latest_buy_at"]:
+                    activity["latest_buy_at"] = created_at_utc
+
+        assets = scan_assets(conn, limit)
+        known_mints = {item.get("asset_id") for item in assets}
+        # Recent buys from strictly qualified FOMO leaderboard accounts become
+        # discovery candidates; the swap feed itself is not treated as chain proof.
+        for mint, activity in fresh_trader_buys.items():
+            if mint not in known_mints:
+                latest_buy = datetime.fromisoformat(
+                    activity["latest_buy_at"].replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+                assets.append({
+                    "asset_id": mint,
+                    "token_name": "",
+                    "latest_collected_at": latest_buy.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "discovery_source": "recent FOMO-qualified trader buy",
+                })
+                known_mints.add(mint)
+        # Add newly created public Solana pools so discovery does not depend only
+        # on historical wallet observations or FOMO trader activity.
+        launch_data = await research_new_launches()
+        launch_rows = launch_data.get("launches") or []
+        for launch in (launch_rows if not launch_data.get("stale") else []):
+            mint = launch.get("asset_id")
+            if isinstance(mint, str) and mint and mint not in known_mints:
+                assets.append({
+                    "asset_id": mint,
+                    "token_name": launch.get("name") or launch.get("symbol") or mint[:8],
+                    "latest_collected_at": utcnow(),
+                    "discovery_source": "GeckoTerminal new pools",
+                })
+                known_mints.add(mint)
+        mints = [item["asset_id"] for item in assets if isinstance(item.get("asset_id"), str)]
+        cache_key = tuple(sorted(set(mints)))
+        cached_market = _callout_market_cache.get(cache_key)
+        if cached_market and time.time() - cached_market[0] < 30:
+            pairs = cached_market[1]
+        else:
+            pairs = []
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                for offset in range(0, len(mints), 30):
+                    batch = mints[offset:offset + 30]
+                    if not batch:
+                        continue
+                    try:
+                        response = await client.get(
+                            "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch),
+                            headers={"Accept": "application/json"},
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        if isinstance(payload, list):
+                            pairs.extend(payload)
+                    except (httpx.HTTPError, ValueError):
+                        log.warning("Customer callout market-data request failed")
+            _callout_market_cache[cache_key] = (time.time(), pairs)
+            if len(_callout_market_cache) > 64:
+                oldest_key = min(_callout_market_cache, key=lambda key: _callout_market_cache[key][0])
+                _callout_market_cache.pop(oldest_key, None)
+        result = fomo_signals.build_callouts(assets, pairs)
+        result["gecko_terminal_new_pools_seen"] = 0 if launch_data.get("stale") else len(launch_rows)
+        spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
+        swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
+        own_activity = {}
+        for swap in swaps:
+            if not isinstance(swap, dict):
+                continue
+            side = swap.get("display", {}).get("side") if isinstance(swap.get("display"), dict) else swap.get("display")
+            timestamp = swap.get("createdAt")
+            for field in ("inTokenAddress", "outTokenAddress"):
+                mint = swap.get(field)
+                if not isinstance(mint, str) or not mint:
+                    continue
+                entry = own_activity.setdefault(mint, {"swap_count": 0, "latest_swap_at": None, "sides": []})
+                entry["swap_count"] += 1
+                if isinstance(timestamp, str) and (
+                    entry["latest_swap_at"] is None or timestamp > entry["latest_swap_at"]
+                ):
+                    entry["latest_swap_at"] = timestamp
+                if isinstance(side, str) and side.lower() in {"buy", "sell"} and side.lower() not in entry["sides"]:
+                    entry["sides"].append(side.lower())
+        for item in result["callouts"]:
+            activity = own_activity.get(item["asset_id"])
+            if activity:
+                item["your_fomo_activity"] = activity
+            trader_activity = fresh_trader_buys.get(item["asset_id"])
+            if trader_activity:
+                item["qualified_trader_activity"] = trader_activity
+                item["reasons"].append(
+                    str(trader_activity["buy_count"]) + " recent buy(s) from leaderboard-qualified FOMO trader(s)"
+                )
+        trader_snapshots = [
+            item for item in snapshots
+            if item["snapshot_type"].startswith("trader_leaderboard")
+        ]
+        trader_rows = sum(
+            len(((item.get("payload") or {}).get("traders") or []))
+            for item in trader_snapshots
+        )
+        whale_gate = whale_selection.qualify_traders(trader_snapshots)
+        result["whale_selection"] = whale_gate
+        result["fomo_context"] = {
+            "connected_spot_swap_snapshot": bool(spot),
+            "observed_spot_swaps": len(swaps),
+            "observed_at": (spot or {}).get("observed_at"),
+            "tokens_with_your_activity": len(own_activity),
+            "trader_leaderboard_captured": bool(trader_snapshots),
+            "trader_leaderboard_rows": trader_rows,
+            "trader_leaderboard_windows": sorted(
+                item["snapshot_type"].removeprefix("trader_leaderboard_")
+                for item in trader_snapshots
+            ),
+            "leaderboard_qualified_traders": whale_gate["qualified_count"],
+            "qualified_trader_swap_snapshot": bool(trader_activity_snapshot),
+            "qualified_trader_swap_rows": len(trader_activity_rows),
+            "fresh_qualified_trader_buys": sum(item["buy_count"] for item in fresh_trader_buys.values()),
+            "interpretation": "Your imported swaps are personal account history. Recent buys are from FOMO leaderboard-qualified accounts, but are not independently chain-verified and are not guaranteed to be profitable.",
+        }
+        return result
+
+    @app.get("/v1/customer/fomo-copilot/callouts")
+    async def customer_fomo_callouts(
+        limit: int = 50,
+        session=Depends(require_customer),
+        conn=Depends(get_conn),
+    ):
+        """Generate manual-review candidates from fresh, observed Solana assets."""
+        if limit < 1 or limit > 50:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+        return await _customer_callout_data(session["account_id"], conn, limit)
+
+    @app.post("/v1/customer/fomo-copilot/callouts/telegram")
+    async def customer_fomo_callouts_telegram(
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        """Send the user-requested top callouts to their own connected Telegram bot."""
+        credentials = customer_integrations.load_customer_integration(
+            conn, session["account_id"], "telegram"
+        )
+        if not credentials or not credentials.get("bot_token") or not credentials.get("chat_id"):
+            raise HTTPException(status_code=404, detail="Connect and test your own Telegram bot first.")
+        integration_status = customer_integrations.get_customer_integration_status(
+            conn, session["account_id"], "telegram"
+        )
+        if integration_status.get("status") != "connected":
+            raise HTTPException(status_code=409, detail="Test your Telegram connection before sending callouts.")
+        data = await _customer_callout_data(session["account_id"], conn, 50)
+        rows = data["callouts"][:5]
+        if not rows:
+            raise HTTPException(status_code=409, detail="No candidates passed the current scan filters.")
+        lines = ["SignalForce · Manual Solana watchlist", "Research only · no orders placed"]
+        for item in rows:
+            lines.extend([
+                "",
+                "%s ($%s) · %s/100" % (
+                    item["name"], item["symbol"] or "—", item["score"]
+                ),
+                "Price: $%s · Liquidity: $%s · 1h volume: $%s" % (
+                    item["price_usd"], round(item["liquidity_usd"]), round(item["volume_1h_usd"])
+                ),
+                "5m buys/sells: %s/%s" % (item["buys_5m"], item["sells_5m"]),
+                item["market_url"],
+                "FOMO-qualified trader buys: " + (
+                    ", ".join(item.get("qualified_trader_activity", {}).get("traders", []))
+                    if item.get("qualified_trader_activity") else "none observed"
+                ),
+                "FOMO app: " + item["fomo_phone_url"],
+                "FOMO web: " + item["fomo_web_url"],
+                "Token: " + item["asset_id"],
+            ])
+        lines.append("\nNo entry/stop/target is supplied. Verify token safety and slippage yourself.")
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    "https://api.telegram.org/bot" + credentials["bot_token"] + "/sendMessage",
+                    json={"chat_id": credentials["chat_id"], "text": "\n".join(lines)[:3900]},
+                )
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                if not response.is_success or not payload.get("ok"):
+                    raise HTTPException(status_code=502, detail="Telegram did not accept the callout message.")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Telegram could not be reached.")
+        return {"sent": True, "count": len(rows), "destination": "your connected Telegram"}
+ 
     @app.post("/v1/customer/fomo-copilot/pairing")
     def customer_fomo_copilot_pairing(session=Depends(require_customer_write), conn=Depends(get_conn)):
         pairing_code = secrets.token_urlsafe(12)
@@ -539,6 +774,39 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         conn.commit()
         return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
+
+    @app.get("/v1/customer/fomo-copilot/bridge-targets")
+    def customer_fomo_copilot_bridge_targets(
+        request: Request,
+        conn=Depends(get_conn),
+    ):
+        """Return only strictly qualified trader IDs to the paired read-only bridge."""
+        bridge_key = request.headers.get("X-Fomo-Bridge-Key", "")
+        if not bridge_key:
+            raise HTTPException(status_code=401, detail="Local bridge key required")
+        supplied_hash = hashlib.sha256(bridge_key.encode()).hexdigest()
+        row = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE bridge_hash=? AND bridge_expires_at>?",
+            (supplied_hash, utcnow()),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Local bridge key is invalid or expired")
+        snapshots = fomo_copilot.list_snapshots(conn, row["account_id"])
+        qualified = whale_selection.qualify_traders(snapshots)["qualified_traders"]
+        return {
+            "qualified_traders": [
+                {
+                    "user_id": trader["user_id"],
+                    "handle": trader["handle"],
+                    "rank_score": trader["rank_score"],
+                }
+                for trader in qualified[:25]
+            ],
+            "count": min(len(qualified), 25),
+            "mode": "read_only",
+            "note": "Only leaderboard-qualified FOMO user IDs are returned. No trade execution is available.",
+        }
 
     @app.post("/v1/customer/fomo-copilot/bridge-snapshot")
     def customer_fomo_copilot_bridge_snapshot(

@@ -6,7 +6,7 @@ cookies, wallet signing material, and trade-execution data are never stored.
 import json
 from datetime import datetime, timezone
 
-ALLOWED_TYPES = {"spot_swaps", "clans_24h", "clans_7d", "clans_30d"}
+ALLOWED_TYPES = {"spot_swaps", "clans_24h", "clans_7d", "clans_30d", "trader_leaderboard", "trader_leaderboard_24h", "trader_leaderboard_7d", "trader_leaderboard_30d", "trader_spot_swaps"}
 MAX_SNAPSHOT_BYTES = 500_000
 BLOCKED_KEYS = {
     "authorization", "cookie", "setcookie", "accesstoken", "refreshtoken",
@@ -37,7 +37,7 @@ def validate_snapshot(snapshot_type: str, payload: dict) -> str:
         raise FomoSnapshotError("Unsupported FOMO snapshot type")
     if not isinstance(payload, dict):
         raise FomoSnapshotError("Snapshot payload must be an object")
-    rows_key = "swaps" if snapshot_type == "spot_swaps" else "clans"
+    rows_key = "swaps" if snapshot_type == "spot_swaps" else ("traders" if snapshot_type.startswith("trader_leaderboard") or snapshot_type == "trader_spot_swaps" else "clans")
     rows = payload.get(rows_key)
     row_limit = 100 if snapshot_type == "spot_swaps" else 50
     if not isinstance(rows, list) or len(rows) > row_limit:
