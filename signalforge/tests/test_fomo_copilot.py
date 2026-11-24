@@ -210,6 +210,27 @@ def test_bridge_targets_requires_pairing_and_returns_only_strictly_qualified_tra
     assert targets.status_code == 200
     assert targets.json()["count"] == 1
     assert targets.json()["qualified_traders"][0]["user_id"] == "qualified-trader-1"
+    activity = client.post(
+        "/v1/customer/fomo-copilot/bridge-snapshot",
+        headers={"X-Fomo-Bridge-Key": bridge_key},
+        json={
+            "snapshot_type": "trader_spot_swaps",
+            "payload": {
+                "traders": [{
+                    "user_id": "qualified-trader-1",
+                    "handle": "qualified",
+                    "swaps": [{
+                        "createdAt": "2026-11-24T20:00:00Z",
+                        "display": {"side": "buy"},
+                        "outTokenAddress": "mint-1",
+                    }],
+                }],
+            },
+        },
+    )
+    assert activity.status_code == 200
+    imported = client.get("/v1/customer/fomo-copilot").json()["snapshots"]
+    assert any(item["snapshot_type"] == "trader_spot_swaps" for item in imported)
 
 
 def test_trader_spot_swap_snapshot_accepts_only_sanitized_trader_rows():
