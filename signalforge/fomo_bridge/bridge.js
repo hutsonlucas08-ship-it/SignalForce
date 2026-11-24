@@ -232,7 +232,8 @@ async function fomoGet(browser, path, allowAuthRefresh = true) {
     }
     if (response.status === 401) {
       browser.authHeader = null;
-      throw new Error("FOMO session expired after one refresh attempt. Sign in manually and restart the bridge.");
+      browser.sessionBlocked = true;
+      throw new Error("FOMO session expired after one refresh attempt. Sign in manually in Chrome; reads are paused.");
     }
     if (response.status === 429) {
       rateGapMs = Math.min(MAX_GAP_MS, rateGapMs * 2);
