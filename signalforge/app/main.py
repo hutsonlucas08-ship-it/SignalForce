@@ -518,11 +518,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         snapshots = fomo_copilot.list_snapshots(conn, account_id)
         spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
         swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
+        own_activity = {}
+        for swap in swaps:
+            if not isinstance(swap, dict):
+                continue
+            side = swap.get("display", {}).get("side") if isinstance(swap.get("display"), dict) else swap.get("display")
+            timestamp = swap.get("createdAt")
+            for field in ("inTokenAddress", "outTokenAddress"):
+                mint = swap.get(field)
+                if not isinstance(mint, str) or not mint:
+                    continue
+                entry = own_activity.setdefault(mint, {"swap_count": 0, "latest_swap_at": None, "sides": []})
+                entry["swap_count"] += 1
+                if isinstance(timestamp, str) and (
+                    entry["latest_swap_at"] is None or timestamp > entry["latest_swap_at"]
+                ):
+                    entry["latest_swap_at"] = timestamp
+                if isinstance(side, str) and side.lower() in {"buy", "sell"} and side.lower() not in entry["sides"]:
+                    entry["sides"].append(side.lower())
+        for item in result["callouts"]:
+            activity = own_activity.get(item["asset_id"])
+            if activity:
+                item["your_fomo_activity"] = activity
         result["fomo_context"] = {
             "connected_spot_swap_snapshot": bool(spot),
             "observed_spot_swaps": len(swaps),
             "observed_at": (spot or {}).get("observed_at"),
-            "interpretation": "Your own imported FOMO activity only; not public trader or whale performance.",
+            "tokens_with_your_activity": len(own_activity),
+            "interpretation": "Matched only against your own imported FOMO swap history; not public trader or whale performance and not a buy signal.",
         }
         return result
 
