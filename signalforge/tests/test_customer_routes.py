@@ -175,10 +175,28 @@ def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
     assert blocked_manual.status_code == 422
     assert client_b.get("/v1/customer/paper-trader").json()["paper_trader"] is None
 
+    running_reset = client_a.post("/v1/customer/paper-trader/start",
+        headers={"X-CSRF-Token": csrf_a}, json={
+            "starting_capital_usd": 250, "profit_target_usd": 100, "mode": "gradual", "new_session": True
+        })
+    assert running_reset.status_code == 422
+
     paused = client_a.post("/v1/customer/paper-trader/pause",
                            headers={"X-CSRF-Token": csrf_a}, json={})
     assert paused.status_code == 200
     assert paused.json()["paper_trader"]["is_running"] is False
+
+    restarted = client_a.post("/v1/customer/paper-trader/start",
+        headers={"X-CSRF-Token": csrf_a}, json={
+            "starting_capital_usd": 250, "profit_target_usd": 100, "mode": "gradual", "new_session": True
+        })
+    assert restarted.status_code == 200
+    fresh = restarted.json()["paper_trader"]
+    assert fresh["starting_capital_usd"] == 250
+    assert fresh["cash_balance_usd"] == 250
+    assert fresh["profit_target_usd"] == 100
+    assert fresh["is_running"] is True
+
     assert client_b.post("/v1/customer/paper-trader/pause",
                          headers={"X-CSRF-Token": csrf_b}, json={}).json()["paper_trader"] is None
 
