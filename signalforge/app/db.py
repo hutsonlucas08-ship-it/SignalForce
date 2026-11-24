@@ -173,6 +173,26 @@ def connect(db_path: str, database_url: str | None = None):
     return conn
 
 
+
+def _sqlite_migration_sql(conn, source_sql: str) -> str:
+    """Apply portable ADD COLUMN IF NOT EXISTS statements on SQLite."""
+    pattern = re.compile(
+        r"ALTER\\s+TABLE\\s+(\\w+)\\s+ADD\\s+COLUMN\\s+IF\\s+NOT\\s+EXISTS\\s+(\\w+)\\s+([^;]+);",
+        re.IGNORECASE,
+    )
+
+    def replace(match):
+        table, column, column_type = match.groups()
+        existing = {
+            row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')
+        }
+        if column in existing:
+            return ""
+        return f'ALTER TABLE "{table}" ADD COLUMN "{column}" {column_type};'
+
+    return pattern.sub(replace, source_sql)
+
+
 def run_migrations(conn, directory: Path = MIGRATIONS_DIR) -> list:
     """Apply unapplied migrations; reject edits to any migration already applied."""
     is_postgres = isinstance(conn, PostgresConnection)
@@ -198,7 +218,9 @@ def run_migrations(conn, directory: Path = MIGRATIONS_DIR) -> list:
                 )
             continue
         migration_sql = (
-            translate_migration_sql(source_sql, path.name) if is_postgres else source_sql
+            translate_migration_sql(source_sql, path.name)
+            if is_postgres
+            else _sqlite_migration_sql(conn, source_sql)
         )
         try:
             if is_postgres:
