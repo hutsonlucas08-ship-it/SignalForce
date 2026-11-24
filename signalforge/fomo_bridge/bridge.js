@@ -5,8 +5,6 @@
  * Browser control surface is limited to open(), screenshot(), read_network(), reload().
  * No DOM input, clicking, typing, signing, or transaction submission exists here.
  */
-import readline from "node:readline";
-
 const CHROME_DEBUG = "http://127.0.0.1:9334";
 const FOMO_API = "https://prod-api.fomo.family";
 const SIGNALFORCE = "https://signalforce-qwat.onrender.com";
@@ -210,6 +208,7 @@ async function waitForFomoRateSlot() {
 }
 
 async function fomoGet(browser, path, allowAuthRefresh = true) {
+  if (!browser.authHeader) throw new Error("FOMO session is not authenticated; sign in manually and refresh the FOMO page.");
   if (!path.startsWith("/v2/")) throw new Error("Only verified FOMO read endpoints are allowed.");
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await waitForFomoRateSlot();
@@ -220,8 +219,13 @@ async function fomoGet(browser, path, allowAuthRefresh = true) {
       cache: "no-store"
     });
     if (response.status === 401 && allowAuthRefresh) {
+      browser.authHeader = null;
       await browser.refreshSession();
       return fomoGet(browser, path, false);
+    }
+    if (response.status === 401) {
+      browser.authHeader = null;
+      throw new Error("FOMO session expired after one refresh attempt. Sign in manually and restart the bridge.");
     }
     if (response.status === 429) {
       rateGapMs = Math.min(MAX_GAP_MS, rateGapMs * 2);
