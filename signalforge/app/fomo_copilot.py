@@ -6,7 +6,7 @@ cookies, wallet signing material, and trade-execution data are never stored.
 import json
 from datetime import datetime, timezone
 
-ALLOWED_TYPES = {"spot_swaps", "clans_24h", "clans_7d", "clans_30d", "trader_leaderboard"}
+ALLOWED_TYPES = {"spot_swaps", "clans_24h", "clans_7d", "clans_30d", "trader_leaderboard", "trader_leaderboard_24h", "trader_leaderboard_7d", "trader_leaderboard_30d"}
 MAX_SNAPSHOT_BYTES = 500_000
 BLOCKED_KEYS = {
     "authorization", "cookie", "setcookie", "accesstoken", "refreshtoken",
