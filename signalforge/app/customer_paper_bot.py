@@ -98,6 +98,7 @@ async def run_customer_paper_bot(db_path,database_url,stop_event):
    try:
     conn=connect(db_path,database_url)
     enabled=conn.execute("SELECT 1 FROM customer_paper_accounts WHERE enabled=1 AND auto_status='running' LIMIT 1").fetchone()
+    conn.commit()
     if enabled and _claim_worker_lease(conn,worker_id):
      owns_lease=True
      signals=paper_bot._recent_wallet_buy_signals(conn)
