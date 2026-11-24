@@ -264,7 +264,7 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
         )
     else:
         paper_id = existing["id"]
-        if existing["auto_status"] == "target_reached":
+        if existing["auto_status"] in {"setup", "target_reached"}:
             conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
             conn.execute(
                 """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,
