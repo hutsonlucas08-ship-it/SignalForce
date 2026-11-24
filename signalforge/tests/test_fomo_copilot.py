@@ -50,7 +50,9 @@ def test_fomo_snapshot_rejects_credentials_and_unknown_snapshot_types():
     csrf = _signed_in(client, "fomo-safe@example.test")
     headers = {"X-CSRF-Token": csrf}
     secret = client.post("/v1/customer/fomo-copilot/snapshot", headers=headers, json={
-        "snapshot_type": "spot_swaps", "payload": {"authorization": "must-not-store"}
+        "snapshot_type": "spot_swaps", "payload": {
+            "swaps": [], "authorization": "must-not-store"
+        }
     })
     assert secret.status_code == 422
     unknown = client.post("/v1/customer/fomo-copilot/snapshot", headers=headers, json={
