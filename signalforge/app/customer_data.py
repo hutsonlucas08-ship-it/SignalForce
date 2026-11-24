@@ -155,7 +155,7 @@ def place_paper_trade(
     if not isinstance(reason, str) or not reason.strip() or len(reason) > 200:
         raise CustomerDataError("Trade reason must be 1–200 characters.")
     account = conn.execute(
-        """SELECT id,cash_balance_usd,auto_session_id FROM customer_paper_accounts
+        """SELECT id,cash_balance_usd,auto_session_id,enabled,auto_status FROM customer_paper_accounts
            WHERE id=? AND account_id=?""",
         (paper_account_id, account_id),
     ).fetchone()
@@ -165,6 +165,8 @@ def place_paper_trade(
         raise CustomerDataError("This account is managed by its automated paper trader.")
     if automated and account["auto_session_id"] is None:
         raise CustomerDataError("Automated paper session is not active.")
+    if automated and (not account["enabled"] or account["auto_status"] != "running"):
+        raise CustomerDataError("This automated paper trader is paused.")
     now = utcnow()
     position = conn.execute(
         "SELECT id,quantity,average_entry_price FROM customer_paper_positions WHERE paper_account_id=? AND asset_id=?",
