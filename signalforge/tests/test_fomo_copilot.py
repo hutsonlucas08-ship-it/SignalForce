@@ -93,3 +93,19 @@ def test_local_bridge_pairing_is_one_time_and_bridge_key_is_tenant_scoped():
                         headers={"X-Fomo-Bridge-Key": "not-the-owner-key"},
                         json={"snapshot_type": "spot_swaps", "payload": payload})
     assert denied.status_code == 401
+
+
+
+def test_local_bridge_exposes_no_dom_input_or_wallet_signing_surface():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "fomo_bridge" / "bridge.js").read_text().lower()
+    forbidden = [
+        "page.click", "page.fill", "page.type", "input.dispatch",
+        "dispatchEvent", "keyboard", "mouse", "locator(", "solders",
+        "keypair", "solana-py", "web3", "sendtransaction",
+    ]
+    for pattern in forbidden:
+        assert pattern not in source
+    assert 'this.send("network.enable")' in source
+    assert 'this.send("page.reload"' in source
