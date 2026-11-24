@@ -260,7 +260,7 @@ def get_customer_paper_trader(conn, account_id: str) -> dict | None:
     return account
 
 
-def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: float, profit_target_usd: float, mode: str) -> dict:
+def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: float, profit_target_usd: float, mode: str, new_session: bool = False) -> dict:
     if mode not in {"gradual", "normal", "aggressive", "ultra_aggressive"}:
         raise CustomerDataError("Choose Gradual, Normal, Aggressive, or Ultra Aggressive mode.")
     if isinstance(starting_capital_usd, bool) or not isinstance(starting_capital_usd, (int, float)) or not 5 <= float(starting_capital_usd) <= 100000000:
@@ -283,7 +283,20 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
         )
     else:
         paper_id = existing["id"]
-        if existing["auto_status"] in {"setup", "target_reached"}:
+        if new_session:
+            if existing["auto_status"] == "running":
+                raise CustomerDataError("Pause your paper trader before starting a new session.")
+            # Reset only current account state; prior trades remain in the journal.
+            conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
+            conn.execute(
+                """UPDATE customer_paper_accounts
+                   SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,strategy_profile=?,
+                       profit_target_usd=?,enabled=1,auto_status='running',auto_session_id=?,updated_at=?
+                   WHERE id=? AND account_id=?""",
+                (float(starting_capital_usd), float(starting_capital_usd), stored_mode, mode,
+                 float(profit_target_usd), session_id, now, paper_id, account_id),
+            )
+        elif existing["auto_status"] in {"setup", "target_reached"}:
             conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
             conn.execute(
                 """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,strategy_profile=?,
