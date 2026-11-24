@@ -126,6 +126,10 @@ class CustomerFomoPairRequest(BaseModel):
     pairing_code: str = Field(min_length=8, max_length=100)
 
 
+class CustomerFomoPaperSettingsRequest(BaseModel):
+    enabled: bool
+
+
 class RiskScreenRequest(BaseModel):
     liquidity_usd: Optional[float] = Field(default=None, ge=0)
     top_10_holder_pct: Optional[float] = Field(default=None, ge=0, le=100)
@@ -477,6 +481,25 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "mode": "read_only_manual",
             "execution_enabled": False,
         }
+
+    @app.post("/v1/customer/paper-trader/fomo-signals")
+    def customer_paper_trader_fomo_signals(
+        body: CustomerFomoPaperSettingsRequest,
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        account = conn.execute(
+            "SELECT id FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1",
+            (session["account_id"],),
+        ).fetchone()
+        if account is None:
+            raise HTTPException(status_code=409, detail="Start your paper trader before enabling FOMO signals.")
+        conn.execute(
+            "UPDATE customer_paper_accounts SET fomo_signals_enabled=?,updated_at=? WHERE id=? AND account_id=?",
+            (1 if body.enabled else 0, utcnow(), account["id"], session["account_id"]),
+        )
+        conn.commit()
+        return {"fomo_signals_enabled": body.enabled, "mode": "paper_only"}
 
     @app.post("/v1/customer/fomo-copilot/pairing")
     def customer_fomo_copilot_pairing(session=Depends(require_customer_write), conn=Depends(get_conn)):
