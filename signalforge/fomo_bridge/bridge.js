@@ -188,7 +188,7 @@ class ReadOnlyFomoBrowser {
       ) || Object.keys(row.user).length > 0 || Object.keys(row.stats).length > 0);
       if (!traders.length) return;
       const urlObject = new URL(url);
-      const pathWindow = urlObject.pathname.match(/(?:^|\\/)(24h|7d|30d)(?:\\/|$)/i)?.[1];
+      const pathWindow = urlObject.pathname.split("/").find(segment => ["24h", "7d", "30d"].includes(segment.toLowerCase()));
       const window = urlObject.searchParams.get("window") || urlObject.searchParams.get("period") || urlObject.searchParams.get("timeframe") || pathWindow || "unknown";
       const normalizedWindow = String(window).toLowerCase();
       const snapshotType = ["24h", "7d", "30d"].includes(normalizedWindow)
