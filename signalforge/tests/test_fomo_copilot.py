@@ -118,7 +118,7 @@ def test_local_bridge_exposes_no_dom_input_or_wallet_signing_surface():
 def test_fomo_paper_signal_setting_is_opt_in_and_tenant_scoped():
     owner, other = _client(), _client()
     csrf = _signed_in(owner, "fomo-paper-owner@example.test")
-    _signed_in(other, "fomo-paper-other@example.test")
+    csrf_other = _signed_in(other, "fomo-paper-other@example.test")
     # Create the customer's paper account using the existing API.
     started = owner.post("/v1/customer/paper-trader/start", headers={"X-CSRF-Token": csrf}, json={
         "starting_capital_usd": 1000, "profit_target_usd": 100, "mode": "normal"
@@ -129,4 +129,7 @@ def test_fomo_paper_signal_setting_is_opt_in_and_tenant_scoped():
     assert enabled.status_code == 200
     assert enabled.json()["fomo_signals_enabled"] is True
     assert owner.get("/v1/customer/paper-trader").json()["paper_trader"]["fomo_signals_enabled"] in (1, True)
-    assert other.post("/v1/customer/paper-trader/fomo-signals", json={"enabled": True}).status_code == 401
+    # The other tenant has no paper account, so it cannot alter the owner's setting.
+    assert other.post("/v1/customer/paper-trader/fomo-signals",
+                      headers={"X-CSRF-Token": csrf_other}, json={"enabled": True}).status_code == 409
+    assert owner.get("/v1/customer/paper-trader").json()["paper_trader"]["fomo_signals_enabled"] in (1, True)
