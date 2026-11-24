@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 
 
 def _num(value):
+    if isinstance(value, bool) or value is None:
+        return None
     try:
         number = float(value)
         if number == number and abs(number) != float("inf"):
@@ -28,7 +30,7 @@ def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
         mint = base.get("address")
         if not isinstance(mint, str) or not mint:
             continue
-        liquidity = _num((pair.get("liquidity") or {}).get("usd")) or 0
+        liquidity = max(0, _num((pair.get("liquidity") or {}).get("usd")) or 0)
         previous = by_mint.get(mint)
         if previous is None or liquidity > previous[0]:
             by_mint[mint] = (liquidity, pair)
@@ -48,9 +50,9 @@ def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
         volume = pair.get("volume") or {}
         txns = pair.get("txns") or {}
         changes = pair.get("priceChange") or {}
-        volume_1h = _num(volume.get("h1")) or 0
-        buys_5m = _num((txns.get("m5") or {}).get("buys")) or 0
-        sells_5m = _num((txns.get("m5") or {}).get("sells")) or 0
+        volume_1h = max(0, _num(volume.get("h1")) or 0)
+        buys_5m = max(0, _num((txns.get("m5") or {}).get("buys")) or 0)
+        sells_5m = max(0, _num((txns.get("m5") or {}).get("sells")) or 0)
         change_5m = _num(changes.get("m5"))
         change_1h = _num(changes.get("h1"))
         try:
