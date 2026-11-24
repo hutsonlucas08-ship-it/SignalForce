@@ -478,21 +478,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "execution_enabled": False,
         }
 
-    @app.get("/v1/customer/fomo-copilot/callouts")
-    async def customer_fomo_callouts(
-        limit: int = 50,
-        session=Depends(require_customer),
-        conn=Depends(get_conn),
-    ):
-        """Generate manual-review candidates from fresh, observed Solana assets."""
-        if limit < 1 or limit > 50:
-            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+    async def _customer_callout_data(account_id, conn, limit):
         assets = scan_assets(conn, limit)
         mints = [item["asset_id"] for item in assets if isinstance(item.get("asset_id"), str)]
         pairs = []
         async with httpx.AsyncClient(timeout=6.0) as client:
-            for start in range(0, len(mints), 30):
-                batch = mints[start:start + 30]
+            for offset in range(0, len(mints), 30):
+                batch = mints[offset:offset + 30]
                 if not batch:
                     continue
                 try:
@@ -507,11 +499,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 except (httpx.HTTPError, ValueError):
                     log.warning("Customer callout market-data request failed")
         result = fomo_signals.build_callouts(assets, pairs)
-        # FOMO activity is surfaced as context only. It is not represented as public-whale proof.
-        snapshots = fomo_copilot.list_snapshots(conn, session["account_id"])
+        snapshots = fomo_copilot.list_snapshots(conn, account_id)
         spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
-        spot_payload = (spot or {}).get("payload") or {}
-        swaps = spot_payload.get("swaps") or []
+        swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
         result["fomo_context"] = {
             "connected_spot_swap_snapshot": bool(spot),
             "observed_spot_swaps": len(swaps),
@@ -520,6 +510,60 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
         return result
 
+    @app.get("/v1/customer/fomo-copilot/callouts")
+    async def customer_fomo_callouts(
+        limit: int = 50,
+        session=Depends(require_customer),
+        conn=Depends(get_conn),
+    ):
+        """Generate manual-review candidates from fresh, observed Solana assets."""
+        if limit < 1 or limit > 50:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+        return await _customer_callout_data(session["account_id"], conn, limit)
+
+    @app.post("/v1/customer/fomo-copilot/callouts/telegram")
+    async def customer_fomo_callouts_telegram(
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        """Send the user-requested top callouts to their own connected Telegram bot."""
+        credentials = customer_integrations.load_customer_integration(
+            conn, session["account_id"], "telegram"
+        )
+        if not credentials or not credentials.get("bot_token") or not credentials.get("chat_id"):
+            raise HTTPException(status_code=404, detail="Connect and test your own Telegram bot first.")
+        data = await _customer_callout_data(session["account_id"], conn, 50)
+        rows = data["callouts"][:5]
+        if not rows:
+            raise HTTPException(status_code=409, detail="No candidates passed the current scan filters.")
+        lines = ["SignalForce · Manual Solana watchlist", "Research only · no orders placed"]
+        for item in rows:
+            lines.extend([
+                "",
+                "%s ($%s) · %s/100" % (
+                    item["name"], item["symbol"] or "—", item["score"]
+                ),
+                "Price: $%s · Liquidity: $%s · 1h volume: $%s" % (
+                    item["price_usd"], round(item["liquidity_usd"]), round(item["volume_1h_usd"])
+                ),
+                "5m buys/sells: %s/%s" % (item["buys_5m"], item["sells_5m"]),
+                item["market_url"],
+                "Token: " + item["asset_id"],
+            ])
+        lines.append("\nNo entry/stop/target is supplied. Verify token safety and slippage yourself.")
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    "https://api.telegram.org/bot" + credentials["bot_token"] + "/sendMessage",
+                    json={"chat_id": credentials["chat_id"], "text": "\n".join(lines)[:3900]},
+                )
+                payload = response.json()
+                if not response.is_success or not payload.get("ok"):
+                    raise HTTPException(status_code=502, detail="Telegram did not accept the callout message.")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Telegram could not be reached.")
+        return {"sent": True, "count": len(rows), "destination": "your connected Telegram"}
+ 
     @app.post("/v1/customer/fomo-copilot/pairing")
     def customer_fomo_copilot_pairing(session=Depends(require_customer_write), conn=Depends(get_conn)):
         pairing_code = secrets.token_urlsafe(12)
