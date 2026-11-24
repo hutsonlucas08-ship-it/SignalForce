@@ -103,6 +103,16 @@ td{color:#dce7ed}
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
   <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. The 0–100 score is a rule-based screening score, not a win probability. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
+  <div class="card" style="margin:12px 0">
+   <div class="head"><div><div class="eyebrow">INDEPENDENT FOMO DATA PROVIDER</div><h2>Live FOMO intelligence · Copy.top</h2><p>Public leaderboard and live activity for FOMO traders. This is a separate provider feed, not your private FOMO session.</p></div><button class="btn primary" id="refreshProviderFeed" type="button">Refresh live feed</button></div>
+   <div id="providerFeedStatus" class="message">Connecting to the independent FOMO data provider…</div>
+   <div class="grid">
+    <div class="card"><div class="eyebrow">LIVE TRADES · FOMO WATCHLIST</div><h3 style="font-size:14px;margin:6px 0">Recent buys and sells</h3><div id="providerLiveTrades"><div class="empty">Loading live FOMO trades…</div></div></div>
+    <div class="card"><div class="eyebrow">TOP FOMO TRADERS</div><h3 style="font-size:14px;margin:6px 0">7-day realized P&amp;L leaderboard</h3><div id="providerLeaderboard"><div class="empty">Loading trader leaderboard…</div></div></div>
+    <div class="card wide"><div class="eyebrow">HOT COINS · 1H</div><h3 style="font-size:14px;margin:6px 0">Tokens receiving trader attention</h3><div id="providerHotCoins" class="launch-grid"><div class="empty">Loading hot coins…</div></div></div>
+   </div>
+   <p class="small">Source: <a href="https://copy.top/fomo-api" target="_blank" rel="noopener noreferrer">Copy.top FOMO API</a>. Copy.top is independent of FOMO. Live trades are requested for handles on its FOMO leaderboard. Hot-coin aggregates may include other platforms unless labeled FOMO. Provider-reported activity is not independent on-chain verification. Manual execution only; no orders are placed.</p>
+  </div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">FOMO TRADER QUALIFICATION</div><h3 style="font-size:14px;margin:6px 0">Leaderboard-qualified traders</h3><p class="small">Strict filters: present in at least two leaderboard windows, 55%+ win rate, 20+ trades in 7d, median hold of 15+ minutes, and no more than 40% of 7d P&amp;L from one token. Missing data never passes.</p><div id="whaleCandidates" class="launch-grid"><div class="empty">Waiting for FOMO leaderboard data.</div></div><p class="small">These are FOMO leaderboard filters, not independently chain-verified trader performance. No trader is treated as a whale signal until the evidence is validated.</p></div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">YOUR TELEGRAM BOT</div><h3 style="font-size:14px;margin:6px 0">Get callout alerts on your phone</h3><p class="small">Create a bot with Telegram's @BotFather, paste its token here, then open your bot and press Start. Your token is encrypted for your account and is never shown again.</p><div class="field"><label>Your Telegram bot token</label><input id="calloutTelegramToken" type="password" autocomplete="off" placeholder="Paste your own bot token"></div><div class="actions"><button class="btn" id="saveCalloutTelegram" type="button">Save bot token</button><button class="btn" id="discoverCalloutTelegram" type="button">Find my chat</button><button class="btn" id="testCalloutTelegram" type="button">Test connection</button><button class="btn primary" id="sendCalloutTelegram" type="button">Send top callouts</button></div><div id="calloutTelegramStatus" class="small" style="margin-top:8px">Telegram is optional. Connect your own bot to receive alerts.</div></div>
   <div class="actions" style="margin-bottom:12px">
@@ -210,6 +220,41 @@ $("discoverCalloutTelegram").onclick=async()=>{try{const data=await request("/v1
 $("testCalloutTelegram").onclick=async()=>{try{await request("/v1/customer/integrations/test",{method:"POST",body:JSON.stringify({provider:"telegram"})});$("calloutTelegramStatus").textContent="Telegram test passed. You can now send callouts.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}};
 $("sendCalloutTelegram").onclick=async()=>{const button=$("sendCalloutTelegram");button.disabled=true;try{const data=await request("/v1/customer/fomo-copilot/callouts/telegram",{method:"POST",body:"{}"});$("calloutTelegramStatus").textContent="Sent "+data.count+" current callouts to your Telegram.";}catch(e){$("calloutTelegramStatus").textContent=e.message;}finally{button.disabled=false;}};
 
+function providerMoney(value){const n=Number(value);return value===null||value===undefined||value===""||!Number.isFinite(n)?"—":usd(n)}
+function providerTime(value){if(!value)return "time unavailable";const d=new Date(value);return Number.isNaN(d.getTime())?"time unavailable":d.toLocaleTimeString()}
+async function loadCopytopFeed(){
+ const status=$("providerFeedStatus"),tradesHost=$("providerLiveTrades"),leaderHost=$("providerLeaderboard"),hotHost=$("providerHotCoins");
+ try{
+  const data=await request("/v1/customer/fomo-copilot/provider-feed");
+  const errors=data.errors||{};
+  const tradeRows=data.live_trades||[],leaderRows=data.leaderboard||[],hotRows=data.hot_coins||[];
+  const failures=Object.values(errors).filter(Boolean);
+  status.textContent="COPY.TOP "+(failures.length?"PARTIAL FEED · "+failures.join(" · "):"LIVE FEED CONNECTED")+" · "+tradeRows.length+" trades · "+leaderRows.length+" traders · refreshed "+providerTime(data.generated_at);
+  status.classList.toggle("error",failures.length===3);
+  tradesHost.innerHTML=tradeRows.length?tradeRows.slice(0,20).map(x=>{
+   const side=String(x.side||"unknown").toUpperCase();
+   const mint=x.mint?'<small class="mono">'+esc(x.mint)+'</small>':"";
+   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(x.handle)+' · '+esc(side)+' '+esc(x.symbol||"?")+'</strong><small style="display:block;color:#91a0ad">'+esc(x.token_name||"")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small>'+mint+(x.mint?'<small><button class="btn" type="button" data-provider-copy="'+esc(x.mint)+'">Copy contract</button></small>':"")+'</div>';
+  }).join(""):'<div class="empty">'+esc(errors.live_trades||"No recent trades returned for the current FOMO leaderboard watchlist.")+'</div>';
+  leaderHost.innerHTML=leaderRows.length?leaderRows.slice(0,20).map((x,i)=>{
+   const fair=String(x.fair_play||"not reported").replaceAll("_"," ");
+   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>#'+esc(x.rank??(i+1))+' · '+esc(x.handle)+'</strong><small style="display:block;color:#91a0ad">Realized P&amp;L '+esc(providerMoney(x.realized_pnl))+' · Win rate '+esc(x.win_rate??"not reported")+' · Closed trades '+esc(x.closed_trades??"not reported")+'</small><small>Fair-play: '+esc(fair)+' · '+esc(x.platform||"FOMO")+'</small></div>';
+  }).join(""):'<div class="empty">'+esc(errors.leaderboard||"No FOMO leaderboard rows returned.")+'</div>';
+  hotHost.innerHTML=hotRows.length?hotRows.slice(0,15).map(x=>{
+   const scope=x.platform_scope||"platform scope not confirmed";
+   return '<article class="launch-card"><div style="min-width:0"><strong>'+esc(x.name||x.symbol||"Unknown token")+' <span class="muted">'+esc(x.symbol||"")+'</span></strong><small class="mono">'+esc(x.mint||"Contract not supplied")+'</small><small class="launch-meta">Traders '+esc(x.trader_count??"—")+' · Bought '+esc(providerMoney(x.bought_usd))+' · Sold '+esc(providerMoney(x.sold_usd))+'</small><small>Market cap '+esc(providerMoney(x.market_cap_usd))+' · '+esc(scope)+'</small><small>'+esc((x.traders||[]).join(", ")||"Trader handles not supplied")+'</small></div></article>';
+  }).join(""):'<div class="empty">'+esc(errors.hot_coins||"No hot-coin rows returned.")+'</div>';
+  document.querySelectorAll("[data-provider-copy]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.getAttribute("data-provider-copy"));button.textContent="Copied";}catch(_){button.textContent="Copy unavailable";}}));
+ }catch(error){
+  status.textContent="Copy.top feed unavailable: "+error.message;
+  status.classList.add("error");
+  tradesHost.innerHTML='<div class="empty">Live feed temporarily unavailable.</div>';
+  leaderHost.innerHTML='<div class="empty">Leaderboard temporarily unavailable.</div>';
+  hotHost.innerHTML='<div class="empty">Hot-coin feed temporarily unavailable.</div>';
+ }
+}
+$("refreshProviderFeed").onclick=loadCopytopFeed;
+
 async function loadFomoCopilot(){
  const status=$("fomoConnectionStatus"),host=$("fomoSnapshotList");
  try{
@@ -220,6 +265,7 @@ async function loadFomoCopilot(){
   status.classList.toggle("error",false);
   const snapshots=data.snapshots||[];
   await loadFomoCallouts();
+  await loadCopytopFeed();
   host.innerHTML=snapshots.length?snapshots.map(snapshot=>{
    const payload=snapshot.payload||{};
    const rows=payload.swaps||payload.clans||payload.traders||[];
