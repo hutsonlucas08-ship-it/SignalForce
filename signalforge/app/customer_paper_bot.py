@@ -418,7 +418,14 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                     else:
                         log.info("Customer fast risk check: %s", risk_summary)
                 elif enabled:
-                    log.warning("Customer risk monitor skipped: another worker holds the database lease")
+                    lease = conn.execute(
+                        "SELECT lock_until_epoch FROM customer_paper_bot_state WHERE id=1"
+                    ).fetchone()
+                    remaining = int((lease or {}).get("lock_until_epoch") or 0) - int(time.time())
+                    log.warning(
+                        "Customer risk monitor skipped: another worker holds the database lease (expires in %ss)",
+                        max(0, remaining),
+                    )
                 else:
                     log.debug("Customer paper trader idle: no enabled running customer accounts")
             except asyncio.CancelledError:
