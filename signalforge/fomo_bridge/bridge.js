@@ -169,7 +169,7 @@ class ReadOnlyFomoBrowser {
           ...pick(row, [
             "rank", "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct",
             "winRate", "totalTrades", "numTrades", "swapCount", "totalVolume",
-            "volumeUsd", "followers", "verified"
+            "volumeUsd", "followers", "verified", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
           ]),
           user: pick(user, [
             "id", "userId", "userHandle", "displayName", "followers",
@@ -177,7 +177,7 @@ class ReadOnlyFomoBrowser {
           ]),
           stats: pick(stats, [
             "pnl", "pnlUsd", "profit", "roi", "roiPct", "winRate",
-            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd"
+            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
           ])
         };
         return clean;
@@ -187,9 +187,13 @@ class ReadOnlyFomoBrowser {
       if (!traders.length) return;
       const urlObject = new URL(url);
       const window = urlObject.searchParams.get("window") || urlObject.searchParams.get("period") || "unknown";
-      await sendSnapshot("trader_leaderboard", {
+      const normalizedWindow = String(window).toLowerCase();
+      const snapshotType = ["24h", "7d", "30d"].includes(normalizedWindow)
+        ? "trader_leaderboard_" + normalizedWindow
+        : "trader_leaderboard";
+      await sendSnapshot(snapshotType, {
         traders,
-        window: String(window).slice(0, 24),
+        window: normalizedWindow.slice(0, 24),
         endpoint_path: urlObject.pathname.slice(0, 180),
         note: "Captured passively from the authenticated FOMO page. Field availability varies; rankings are not independently verified."
       });
