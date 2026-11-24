@@ -547,12 +547,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             activity = own_activity.get(item["asset_id"])
             if activity:
                 item["your_fomo_activity"] = activity
+        trader_snapshot = next(
+            (item for item in snapshots if item["snapshot_type"] == "trader_leaderboard"),
+            None,
+        )
+        trader_rows = ((trader_snapshot or {}).get("payload") or {}).get("traders") or []
         result["fomo_context"] = {
             "connected_spot_swap_snapshot": bool(spot),
             "observed_spot_swaps": len(swaps),
             "observed_at": (spot or {}).get("observed_at"),
             "tokens_with_your_activity": len(own_activity),
-            "interpretation": "Matched only against your own imported FOMO swap history; not public trader or whale performance and not a buy signal.",
+            "trader_leaderboard_captured": bool(trader_snapshot),
+            "trader_leaderboard_rows": len(trader_rows),
+            "trader_leaderboard_observed_at": (trader_snapshot or {}).get("observed_at"),
+            "interpretation": "Your imported swaps are personal account history. Trader leaderboard rows are captured from FOMO's page but still require performance and identity validation before whale signals can be generated.",
         }
         return result
 
