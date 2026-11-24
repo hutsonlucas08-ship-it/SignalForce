@@ -571,6 +571,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
         if not credentials or not credentials.get("bot_token") or not credentials.get("chat_id"):
             raise HTTPException(status_code=404, detail="Connect and test your own Telegram bot first.")
+        integration_status = customer_integrations.get_customer_integration_status(
+            conn, session["account_id"], "telegram"
+        )
+        if integration_status.get("status") != "connected":
+            raise HTTPException(status_code=409, detail="Test your Telegram connection before sending callouts.")
         data = await _customer_callout_data(session["account_id"], conn, 50)
         rows = data["callouts"][:5]
         if not rows:
