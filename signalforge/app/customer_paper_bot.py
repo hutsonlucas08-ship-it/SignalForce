@@ -14,12 +14,20 @@ from .db import connect, utcnow
 
 log = logging.getLogger("signalforce.customer_paper_bot")
 log.setLevel(logging.INFO)
-INTERVAL_SECONDS = 30.0
+RISK_MONITOR_INTERVAL_SECONDS = 5.0
+STRATEGY_SCAN_INTERVAL_SECONDS = 30.0
 MARKET_ONLY_MIN_SCORE = 50.0
+BUNDLE_SELL_WINDOW_SECONDS = 60
+BUNDLE_SELL_MIN_WALLETS = 3
+BUNDLE_SELL_MIN_USD = 250.0
+LIQUIDITY_RUG_DROP_PCT = 35.0
+SELL_PRESSURE_MIN_SELLS = 12
+SELL_PRESSURE_RATIO = 2.0
 MODE_RULES = {
     "gradual": {"position_fraction": 0.03, "max_positions": 4, "min_score": 55.0, "stop_loss": -8.0, "take_profit": 25.0},
     "normal": {"position_fraction": 0.05, "max_positions": 7, "min_score": 45.0, "stop_loss": -10.0, "take_profit": 35.0},
     "aggressive": {"position_fraction": 0.08, "max_positions": 10, "min_score": 35.0, "stop_loss": -15.0, "take_profit": 50.0},
+    "ultra_aggressive": {"position_fraction": 0.10, "max_positions": 8, "min_score": 40.0, "stop_loss": -15.0, "take_profit": None, "partial_at": 50.0, "partial_fraction": 0.40, "trailing_fraction": 0.20},
 }
 
 
@@ -43,6 +51,131 @@ def _sell(conn, account, pos, price, reason):
         )
 
 
+
+
+def _sell_fraction(conn, account, pos, price, fraction, reason):
+    fraction = max(0.0, min(1.0, float(fraction)))
+    amount = float(pos["quantity"]) * price * fraction
+    if amount > 0:
+        return customer_data.place_paper_trade(
+            conn, account["account_id"], account["id"], asset_id=pos["asset_id"],
+            token_name=pos["token_name"], side="sell", amount_usd=amount,
+            price_usd=price, reason=reason, automated=True,
+        )
+    return None
+
+
+def _bundle_sell_cluster(conn, mint):
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=BUNDLE_SELL_WINDOW_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    row = conn.execute(
+        """SELECT COUNT(DISTINCT wallet_address) AS wallets,
+                  COALESCE(SUM(COALESCE(usd_amount,0)),0) AS usd
+           FROM wallet_trade_events
+           WHERE mint=? AND side='sell' AND occurred_at>=?""",
+        (mint, cutoff),
+    ).fetchone()
+    return int(row["wallets"] or 0), float(row["usd"] or 0)
+
+
+def monitor_customer_positions(conn, pairs):
+    """Fast shared exit/rug monitor for every customer strategy mode."""
+    summary = {"checked": 0, "risk_exits": 0, "stop_exits": 0,
+               "take_profit_exits": 0, "partial_exits": 0,
+               "bundle_sell_flags": 0, "stale_positions": 0}
+    rows = conn.execute(
+        """SELECT p.*, a.account_id, a.strategy_mode
+           FROM customer_paper_positions p
+           JOIN customer_paper_accounts a ON a.id=p.paper_account_id
+           WHERE a.enabled=1 AND a.auto_status='running'
+           ORDER BY p.updated_at"""
+    ).fetchall()
+    for raw in rows:
+        pos = dict(raw)
+        pair = pairs.get(pos["asset_id"])
+        try:
+            price = float((pair or {}).get("priceUsd"))
+        except (TypeError, ValueError):
+            price = 0.0
+        if price <= 0:
+            summary["stale_positions"] += 1
+            continue
+
+        rules = MODE_RULES.get(pos["strategy_mode"], MODE_RULES["normal"])
+        liquidity_value = ((pair.get("liquidity") or {}).get("usd")) if pair else None
+        try:
+            liquidity = float(liquidity_value) if liquidity_value is not None else 0.0
+        except (TypeError, ValueError):
+            liquidity = 0.0
+        entry_liquidity = float(pos.get("entry_liquidity_usd") or 0)
+        if entry_liquidity <= 0 and liquidity > 0:
+            entry_liquidity = liquidity
+        peak = max(float(pos.get("peak_price") or 0), float(pos["average_entry_price"]), price)
+        conn.execute(
+            """UPDATE customer_paper_positions
+               SET last_price=?,peak_price=?,entry_liquidity_usd=?,updated_at=?
+               WHERE id=? AND paper_account_id=?""",
+            (price, peak, entry_liquidity, utcnow(), pos["id"], pos["paper_account_id"]),
+        )
+        summary["checked"] += 1
+
+        change = (price / float(pos["average_entry_price"]) - 1) * 100
+        price_change = pair.get("priceChange") or {}
+        txns = pair.get("txns") or {}
+        m5 = txns.get("m5") or {}
+        try:
+            buys5, sells5 = int(m5.get("buys")), int(m5.get("sells"))
+            change5 = float(price_change.get("m5"))
+        except (TypeError, ValueError):
+            buys5 = sells5 = None
+            change5 = None
+
+        cluster_wallets, cluster_usd = _bundle_sell_cluster(conn, pos["asset_id"])
+        danger_reason = None
+        if cluster_wallets >= BUNDLE_SELL_MIN_WALLETS and cluster_usd >= BUNDLE_SELL_MIN_USD:
+            danger_reason = "Risk exit: %s tracked wallets sold within %ss ($%.0f observed)" % (
+                cluster_wallets, BUNDLE_SELL_WINDOW_SECONDS, cluster_usd
+            )
+            summary["bundle_sell_flags"] += 1
+        elif entry_liquidity > 0 and liquidity > 0:
+            liquidity_drop = (1 - liquidity / entry_liquidity) * 100
+            if liquidity_drop >= LIQUIDITY_RUG_DROP_PCT:
+                danger_reason = "Risk exit: liquidity dropped %.0f%% from entry" % liquidity_drop
+        if (danger_reason is None and buys5 is not None and sells5 is not None
+                and change5 is not None and sells5 >= max(SELL_PRESSURE_MIN_SELLS, buys5 * SELL_PRESSURE_RATIO)
+                and change5 <= -8.0):
+            danger_reason = "Risk exit: heavy sell pressure (%s sells vs %s buys in 5m)" % (sells5, buys5)
+
+        account = {"id": pos["paper_account_id"], "account_id": pos["account_id"]}
+        if danger_reason:
+            _sell(conn, account, pos, price, danger_reason[:195])
+            summary["risk_exits"] += 1
+            continue
+        if change <= rules["stop_loss"]:
+            _sell(conn, account, pos, price, "Automatic %s stop-loss" % pos["strategy_mode"])
+            summary["stop_exits"] += 1
+            continue
+
+        if pos["strategy_mode"] == "ultra_aggressive":
+            if not bool(pos.get("partial_profit_taken")) and change >= rules["partial_at"]:
+                _sell_fraction(conn, account, pos, price, rules["partial_fraction"],
+                               "Ultra Aggressive: sold 40%% at +%.1f%%; trailing remaining 60%%" % change)
+                conn.execute(
+                    "UPDATE customer_paper_positions SET partial_profit_taken=1 WHERE id=?",
+                    (pos["id"],),
+                )
+                summary["partial_exits"] += 1
+                continue
+            if bool(pos.get("partial_profit_taken")) and price <= peak * (1 - rules["trailing_fraction"]):
+                _sell(conn, account, pos, price,
+                      "Ultra Aggressive trailing exit: fell %.1f%% from peak" % ((1-price/peak)*100))
+                summary["take_profit_exits"] += 1
+        elif rules.get("take_profit") is not None and change >= rules["take_profit"]:
+            _sell(conn, account, pos, price, "Automatic %s take-profit" % pos["strategy_mode"])
+            summary["take_profit_exits"] += 1
+
+    conn.commit()
+    return summary
+
 def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
     """Manage exits and evaluate both wallet-confirmed and market-only entries."""
     summary = {
@@ -62,27 +195,7 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
             "SELECT * FROM customer_paper_positions WHERE paper_account_id=?", (account["id"],)
         ).fetchall()
 
-        for raw_pos in positions:
-            pos = dict(raw_pos)
-            pair = pairs.get(pos["asset_id"])
-            try:
-                price = float((pair or {}).get("priceUsd"))
-            except (TypeError, ValueError):
-                price = 0
-            if price <= 0:
-                continue
-            conn.execute(
-                "UPDATE customer_paper_positions SET last_price=?,updated_at=? WHERE id=? AND paper_account_id=?",
-                (price, utcnow(), pos["id"], account["id"]),
-            )
-            change = (price / float(pos["average_entry_price"]) - 1) * 100
-            if change <= rules["stop_loss"]:
-                _sell(conn, account, pos, price, "Automatic " + account["strategy_mode"] + " stop-loss")
-                summary["sells"] += 1
-            elif change >= rules["take_profit"]:
-                _sell(conn, account, pos, price, "Automatic " + account["strategy_mode"] + " take-profit")
-                summary["sells"] += 1
-
+        # Position exits are handled by the shared five-second risk monitor.
         conn.commit()
         account = dict(conn.execute(
             "SELECT * FROM customer_paper_accounts WHERE id=? AND account_id=?",
@@ -179,9 +292,10 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                         ),
                         automated=True,
                     )
+                    liquidity = float(((pair.get("liquidity") or {}).get("usd")) or 0)
                     conn.execute(
-                        "UPDATE customer_paper_positions SET last_price=? WHERE paper_account_id=? AND asset_id=?",
-                        (price, account["id"], mint),
+                        "UPDATE customer_paper_positions SET last_price=?,peak_price=?,entry_liquidity_usd=? WHERE paper_account_id=? AND asset_id=?",
+                        (price, price, liquidity, account["id"], mint),
                     )
                     summary["buys"] += 1
                 else:
@@ -227,8 +341,12 @@ def _release_worker_lease(conn, worker_id):
 
 async def run_customer_paper_bot(db_path, database_url, stop_event):
     worker_id = secrets.token_urlsafe(16)
-    log.warning("Customer paper trader worker started; scan interval=%ss", INTERVAL_SECONDS)
-    async with httpx.AsyncClient(timeout=10.0, headers={"Accept": "application/json"}) as client:
+    last_strategy_scan = 0.0
+    log.warning(
+        "Customer paper trader started; shared risk monitor=%ss; strategy scan=%ss",
+        RISK_MONITOR_INTERVAL_SECONDS, STRATEGY_SCAN_INTERVAL_SECONDS,
+    )
+    async with httpx.AsyncClient(timeout=8.0, headers={"Accept": "application/json"}) as client:
         while not stop_event.is_set():
             started = time.monotonic()
             conn = None
@@ -239,15 +357,20 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                     "SELECT 1 FROM customer_paper_accounts WHERE enabled=1 AND auto_status='running' LIMIT 1"
                 ).fetchone()
                 conn.commit()
-                if enabled:
-                    if _claim_worker_lease(conn, worker_id):
-                        owns_lease = True
+                if enabled and _claim_worker_lease(conn, worker_id):
+                    owns_lease = True
+                    held_rows = conn.execute(
+                        """SELECT DISTINCT p.asset_id
+                           FROM customer_paper_positions p
+                           JOIN customer_paper_accounts a ON a.id=p.paper_account_id
+                           WHERE a.enabled=1 AND a.auto_status='running'"""
+                    ).fetchall()
+                    held = [row["asset_id"] for row in held_rows]
+                    held_pairs = await paper_bot._fetch_pairs(client, held) if held else {}
+                    risk_summary = monitor_customer_positions(conn, held_pairs)
+                    now_mono = time.monotonic()
+                    if now_mono - last_strategy_scan >= STRATEGY_SCAN_INTERVAL_SECONDS:
                         signals = paper_bot._recent_wallet_buy_signals(conn)
-                        held = [
-                            row["asset_id"] for row in conn.execute(
-                                "SELECT DISTINCT asset_id FROM customer_paper_positions"
-                            ).fetchall()
-                        ]
                         observed = paper_bot.scan_assets(conn, 100)
                         launches = await paper_bot._fetch_gecko_new_launches(client)
                         names = {
@@ -255,8 +378,7 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                             for item in (observed + launches) if item.get("asset_id")
                         }
                         discovered = list(dict.fromkeys(
-                            held
-                            + list(signals.keys())
+                            held + list(signals.keys())
                             + [item["asset_id"] for item in observed if item.get("asset_id")]
                             + [item["asset_id"] for item in launches if item.get("asset_id")]
                         ))[:180]
@@ -266,16 +388,20 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                             "discovered": len(discovered),
                             "wallet_candidates": len(signals),
                             "market_candidates": len(observed) + len(launches),
+                            "risk_monitor": risk_summary,
                         })
-                        log.info("Customer paper scan: %s", summary)
+                        log.info("Customer paper strategy scan: %s", summary)
+                        last_strategy_scan = now_mono
                     else:
-                        log.warning("Customer paper scan skipped: another worker holds the database lease")
+                        log.info("Customer fast risk check: %s", risk_summary)
+                elif enabled:
+                    log.warning("Customer risk monitor skipped: another worker holds the database lease")
                 else:
                     log.debug("Customer paper trader idle: no enabled running customer accounts")
             except asyncio.CancelledError:
                 raise
             except Exception:
-                log.exception("Customer paper trader scan failed")
+                log.exception("Customer paper trader risk/strategy cycle failed")
             finally:
                 if conn is not None:
                     if owns_lease:
@@ -284,7 +410,7 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                         except Exception:
                             log.exception("Could not release customer paper worker lease")
                     conn.close()
-            remaining = max(0.0, INTERVAL_SECONDS - (time.monotonic() - started))
+            remaining = max(0.0, RISK_MONITOR_INTERVAL_SECONDS - (time.monotonic() - started))
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=remaining)
             except asyncio.TimeoutError:
