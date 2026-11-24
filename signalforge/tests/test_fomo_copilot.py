@@ -144,3 +144,23 @@ def test_trader_leaderboard_snapshot_accepts_sanitized_rows_only():
         pass
     else:
         raise AssertionError("leaderboard snapshots must reject credential fields")
+
+
+
+def test_trader_leaderboard_snapshot_persists_with_new_schema_migration():
+    client = _client()
+    csrf = _signed_in(client, "leaderboard-persist@example.test")
+    response = client.post(
+        "/v1/customer/fomo-copilot/snapshot",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "snapshot_type": "trader_leaderboard_7d",
+            "payload": {
+                "window": "7d",
+                "traders": [{"rank": 1, "user": {"id": "trader-1"}}],
+            },
+        },
+    )
+    assert response.status_code == 200
+    snapshots = client.get("/v1/customer/fomo-copilot").json()["snapshots"]
+    assert any(item["snapshot_type"] == "trader_leaderboard_7d" for item in snapshots)
