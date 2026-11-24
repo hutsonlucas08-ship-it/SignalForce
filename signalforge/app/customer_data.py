@@ -218,3 +218,78 @@ def place_paper_trade(
         "quantity": quantity, "price_usd": float(price_usd), "amount_usd": float(amount_usd),
         "realized_pnl_usd": realized, "cash_balance_usd": new_cash,
     }
+
+
+def get_customer_paper_trader(conn, account_id: str) -> dict | None:
+    row = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
+    if row is None:
+        return None
+    account = dict(row)
+    positions = conn.execute(
+        "SELECT asset_id,token_name,quantity,average_entry_price,last_price,opened_at FROM customer_paper_positions WHERE paper_account_id=? ORDER BY opened_at DESC",
+        (account["id"],),
+    ).fetchall()
+    market_value = sum(float(p["quantity"]) * (float(p["last_price"]) or float(p["average_entry_price"])) for p in positions)
+    equity = float(account["cash_balance_usd"]) + market_value
+    realized = conn.execute("SELECT COALESCE(SUM(realized_pnl_usd),0) FROM customer_paper_trades WHERE paper_account_id=? AND side='sell'", (account["id"],)).fetchone()[0]
+    account.update({
+        "equity_usd": round(equity, 2),
+        "profit_usd": round(equity - float(account["starting_capital_usd"]), 2),
+        "target_progress_pct": round(max(0.0, min(100.0, (equity - float(account["starting_capital_usd"])) / float(account["profit_target_usd"]) * 100.0)), 1),
+        "realized_pnl_usd": round(float(realized or 0), 2),
+        "positions": [dict(p) for p in positions],
+        "is_running": bool(account["enabled"]) and account["auto_status"] == "running",
+    })
+    return account
+
+
+def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: float, profit_target_usd: float, mode: str) -> dict:
+    if mode not in {"gradual", "normal", "aggressive"}:
+        raise CustomerDataError("Choose Gradual, Normal, or Aggressive mode.")
+    if isinstance(starting_capital_usd, bool) or not isinstance(starting_capital_usd, (int, float)) or not 5 <= float(starting_capital_usd) <= 100000000:
+        raise CustomerDataError("Starting balance must be between $5 and $100,000,000.")
+    if isinstance(profit_target_usd, bool) or not isinstance(profit_target_usd, (int, float)) or not 1 <= float(profit_target_usd) <= 100000000:
+        raise CustomerDataError("Profit target must be between $1 and $100,000,000.")
+    if conn.execute("SELECT id FROM customer_accounts WHERE id=? AND status='active'", (account_id,)).fetchone() is None:
+        raise CustomerDataError("Customer account is not active.")
+    existing = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
+    now = utcnow()
+    if existing is None:
+        paper_id = secrets.token_urlsafe(18)
+        conn.execute(
+            """INSERT INTO customer_paper_accounts
+               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,profit_target_usd,auto_status,created_at,updated_at)
+               VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,'running',?,?)""",
+            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, now),
+        )
+    else:
+        paper_id = existing["id"]
+        if existing["auto_status"] == "target_reached":
+            conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
+            conn.execute(
+                """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,
+                   profit_target_usd=?,enabled=1,auto_status='running',updated_at=? WHERE id=? AND account_id=?""",
+                (float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), now, paper_id, account_id),
+            )
+        else:
+            trade_count = conn.execute("SELECT COUNT(*) FROM customer_paper_trades WHERE paper_account_id=?", (paper_id,)).fetchone()[0]
+            has_positions = conn.execute("SELECT 1 FROM customer_paper_positions WHERE paper_account_id=? LIMIT 1", (paper_id,)).fetchone()
+            if not trade_count and not has_positions:
+                conn.execute("UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=? WHERE id=? AND account_id=?",
+                             (float(starting_capital_usd), float(starting_capital_usd), paper_id, account_id))
+            conn.execute(
+                """UPDATE customer_paper_accounts SET strategy_mode=?,profit_target_usd=?,enabled=1,auto_status='running',updated_at=?
+                   WHERE id=? AND account_id=?""",
+                (mode, float(profit_target_usd), now, paper_id, account_id),
+            )
+    conn.commit()
+    return get_customer_paper_trader(conn, account_id)
+
+
+def pause_customer_paper_trader(conn, account_id: str) -> dict | None:
+    conn.execute(
+        "UPDATE customer_paper_accounts SET enabled=0,auto_status='paused',updated_at=? WHERE account_id=? AND auto_status='running'",
+        (utcnow(), account_id),
+    )
+    conn.commit()
+    return get_customer_paper_trader(conn, account_id)
