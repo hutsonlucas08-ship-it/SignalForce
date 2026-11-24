@@ -196,7 +196,28 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
             "SELECT * FROM customer_paper_positions WHERE paper_account_id=?", (account["id"],)
         ).fetchall()
 
-        # Position exits are handled by the shared five-second risk monitor.
+        # The five-second monitor is primary; retain strategy-cycle exits as a
+        # fallback if a risk-monitor request was delayed or temporarily skipped.
+        for raw_pos in positions:
+            pos = dict(raw_pos)
+            pair = pairs.get(pos["asset_id"])
+            try:
+                price = float((pair or {}).get("priceUsd"))
+            except (TypeError, ValueError):
+                price = 0.0
+            if price <= 0:
+                continue
+            conn.execute(
+                "UPDATE customer_paper_positions SET last_price=?,updated_at=? WHERE id=? AND paper_account_id=?",
+                (price, utcnow(), pos["id"], account["id"]),
+            )
+            change = (price / float(pos["average_entry_price"]) - 1) * 100
+            if change <= rules["stop_loss"]:
+                _sell(conn, account, pos, price, "Automatic " + strategy_mode + " stop-loss")
+                summary["sells"] += 1
+            elif rules.get("take_profit") is not None and change >= rules["take_profit"]:
+                _sell(conn, account, pos, price, "Automatic " + strategy_mode + " take-profit")
+                summary["sells"] += 1
         conn.commit()
         account = dict(conn.execute(
             "SELECT * FROM customer_paper_accounts WHERE id=? AND account_id=?",
