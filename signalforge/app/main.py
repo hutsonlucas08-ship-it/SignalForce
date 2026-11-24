@@ -142,6 +142,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             app.state.customer_paper_bot_task = asyncio.create_task(
                 customer_paper_bot.run_customer_paper_bot(settings.db_path, settings.database_url, app.state.customer_paper_bot_stop)
             )
+            log.warning("Customer paper trader background task scheduled")
             if os.getenv("HELIUS_API_KEY"):
                 app.state.helius_sync_task = asyncio.create_task(
                     run_helius_sync(settings.db_path, app.state.helius_sync_stop)
