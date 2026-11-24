@@ -8,6 +8,24 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 
+SOLANA_QUOTE_ASSETS = {
+    "So11111111111111111111111111111111111111112",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkGZwyTDt1v",
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+}
+_BASE58 = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+
+def is_solana_mint(value):
+    """Conservatively recognize a Solana public-key-shaped mint, excluding quote assets."""
+    return (
+        isinstance(value, str)
+        and 32 <= len(value) <= 44
+        and value not in SOLANA_QUOTE_ASSETS
+        and all(character in _BASE58 for character in value)
+    )
+
+
 def _num(value):
     if isinstance(value, bool) or value is None:
         return None
