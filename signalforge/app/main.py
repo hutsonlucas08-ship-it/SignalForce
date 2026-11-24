@@ -33,6 +33,7 @@ _price_history = {}
 _bubble_cache = {}
 _launch_cache = {}
 _launch_retry_after = {}
+_callout_market_cache = {}
 
 
 class HaltRequest(BaseModel):
@@ -496,23 +497,29 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 })
                 known_mints.add(mint)
         mints = [item["asset_id"] for item in assets if isinstance(item.get("asset_id"), str)]
-        pairs = []
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            for offset in range(0, len(mints), 30):
-                batch = mints[offset:offset + 30]
-                if not batch:
-                    continue
-                try:
-                    response = await client.get(
-                        "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch),
-                        headers={"Accept": "application/json"},
-                    )
-                    response.raise_for_status()
-                    payload = response.json()
-                    if isinstance(payload, list):
-                        pairs.extend(payload)
-                except (httpx.HTTPError, ValueError):
-                    log.warning("Customer callout market-data request failed")
+        cache_key = tuple(sorted(set(mints)))
+        cached_market = _callout_market_cache.get(cache_key)
+        if cached_market and time.time() - cached_market[0] < 30:
+            pairs = cached_market[1]
+        else:
+            pairs = []
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                for offset in range(0, len(mints), 30):
+                    batch = mints[offset:offset + 30]
+                    if not batch:
+                        continue
+                    try:
+                        response = await client.get(
+                            "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch),
+                            headers={"Accept": "application/json"},
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        if isinstance(payload, list):
+                            pairs.extend(payload)
+                    except (httpx.HTTPError, ValueError):
+                        log.warning("Customer callout market-data request failed")
+            _callout_market_cache[cache_key] = (time.time(), pairs)
         result = fomo_signals.build_callouts(assets, pairs)
         result["gecko_terminal_new_pools_seen"] = len(launch_rows)
         snapshots = fomo_copilot.list_snapshots(conn, account_id)
