@@ -1,7 +1,6 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
 import asyncio
 import hashlib
-import hmac
 import secrets
 import json
 import logging
