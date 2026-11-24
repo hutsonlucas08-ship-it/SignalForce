@@ -260,8 +260,8 @@ def get_customer_paper_trader(conn, account_id: str) -> dict | None:
 
 
 def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: float, profit_target_usd: float, mode: str) -> dict:
-    if mode not in {"gradual", "normal", "aggressive"}:
-        raise CustomerDataError("Choose Gradual, Normal, or Aggressive mode.")
+    if mode not in {"gradual", "normal", "aggressive", "ultra_aggressive"}:
+        raise CustomerDataError("Choose Gradual, Normal, Aggressive, or Ultra Aggressive mode.")
     if isinstance(starting_capital_usd, bool) or not isinstance(starting_capital_usd, (int, float)) or not 5 <= float(starting_capital_usd) <= 100000000:
         raise CustomerDataError("Starting balance must be between $5 and $100,000,000.")
     if isinstance(profit_target_usd, bool) or not isinstance(profit_target_usd, (int, float)) or not 1 <= float(profit_target_usd) <= 100000000:
