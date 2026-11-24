@@ -75,7 +75,8 @@ def test_local_bridge_pairing_is_one_time_and_bridge_key_is_tenant_scoped():
     assert paired.status_code == 200
     bridge_key = paired.json()["bridge_key"]
     assert bridge_key
-    assert bridge_key not in paired.text or len(bridge_key) > 20
+    assert len(bridge_key) > 20
+    assert bridge_key not in owner.get("/v1/customer/fomo-copilot").text
 
     reused = owner.post("/v1/customer/fomo-copilot/pair", json={"pairing_code": code})
     assert reused.status_code == 401
