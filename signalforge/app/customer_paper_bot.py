@@ -18,7 +18,8 @@ RISK_MONITOR_INTERVAL_SECONDS = 5.0
 STRATEGY_SCAN_INTERVAL_SECONDS = 30.0
 MARKET_ONLY_MIN_SCORE = 50.0
 BUNDLE_SELL_WINDOW_SECONDS = 60
-WORKER_LEASE_SECONDS = 45
+WORKER_LEASE_SECONDS = 90
+WORKER_LEASE_HEARTBEAT_SECONDS = 20
 BUNDLE_SELL_MIN_WALLETS = 3
 BUNDLE_SELL_MIN_USD = 250.0
 LIQUIDITY_RUG_DROP_PCT = 35.0
@@ -475,6 +476,42 @@ def _release_worker_lease(conn, worker_id):
     conn.commit()
 
 
+def _renew_worker_lease(conn, worker_id):
+    """Extend the lease only while this worker still owns it."""
+    row = conn.execute(
+        "UPDATE customer_paper_bot_state SET lock_until_epoch=? "
+        "WHERE id=1 AND lock_owner=? RETURNING id",
+        (int(time.time()) + WORKER_LEASE_SECONDS, worker_id),
+    ).fetchone()
+    conn.commit()
+    return row is not None
+
+
+async def _keep_worker_lease_alive(db_path, database_url, worker_id, stop_event):
+    """Renew during slow provider calls so another replica cannot steal a live job."""
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=WORKER_LEASE_HEARTBEAT_SECONDS
+            )
+            return
+        except asyncio.TimeoutError:
+            pass
+        conn = None
+        try:
+            conn = connect(db_path, database_url)
+            if not _renew_worker_lease(conn, worker_id):
+                log.error("Customer paper worker lost its database lease; stopping heartbeat")
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Customer paper worker lease heartbeat failed")
+        finally:
+            if conn is not None:
+                conn.close()
+
+
 async def run_customer_paper_bot(db_path, database_url, stop_event):
     worker_id = secrets.token_urlsafe(16)
     last_strategy_scan = 0.0
@@ -487,6 +524,7 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
             started = time.monotonic()
             conn = None
             owns_lease = False
+            lease_heartbeat = None
             try:
                 conn = connect(db_path, database_url)
                 enabled = conn.execute(
@@ -495,6 +533,10 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                 conn.commit()
                 if enabled and _claim_worker_lease(conn, worker_id):
                     owns_lease = True
+                    lease_heartbeat = asyncio.create_task(
+                        _keep_worker_lease_alive(db_path, database_url, worker_id, stop_event)
+                    )
+                    log.info("Customer paper worker acquired database lease")
                     held_rows = conn.execute(
                         """SELECT DISTINCT p.asset_id
                            FROM customer_paper_positions p
@@ -546,6 +588,12 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
             except Exception:
                 log.exception("Customer paper trader risk/strategy cycle failed")
             finally:
+                if lease_heartbeat is not None:
+                    lease_heartbeat.cancel()
+                    try:
+                        await lease_heartbeat
+                    except asyncio.CancelledError:
+                        pass
                 if conn is not None:
                     if owns_lease:
                         try:
