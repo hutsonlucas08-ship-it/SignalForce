@@ -687,6 +687,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 ),
                 "5m buys/sells: %s/%s" % (item["buys_5m"], item["sells_5m"]),
                 item["market_url"],
+                "FOMO-qualified trader buys: " + (
+                    ", ".join(item.get("qualified_trader_activity", {}).get("traders", []))
+                    if item.get("qualified_trader_activity") else "none observed"
+                ),
                 "FOMO app: " + item["fomo_phone_url"],
                 "FOMO web: " + item["fomo_web_url"],
                 "Token: " + item["asset_id"],
