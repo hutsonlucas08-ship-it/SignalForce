@@ -20,6 +20,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
 _GECKO_LAUNCH_CACHE = (0.0, [])
+_GECKO_RETRY_AFTER = 0.0
 _STALE_ALERTED = {}
 INTERVAL_SECONDS = 30.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
@@ -183,11 +184,17 @@ async def _fetch_pairs(client, mints):
 
 
 async def _fetch_gecko_new_launches(client):
-    """Fetch/cache GeckoTerminal's newest Solana pools as extra bot candidates."""
-    global _GECKO_LAUNCH_CACHE
+    """Fetch/cache GeckoTerminal new pools; back off on provider failures.
+
+    New-pool discovery is supplemental: tracked-wallet and indexed-market
+    candidates continue to run if GeckoTerminal is unavailable.
+    """
+    global _GECKO_LAUNCH_CACHE, _GECKO_RETRY_AFTER
     now = time.time()
     cached_at, cached = _GECKO_LAUNCH_CACHE
     if now - cached_at < 45:
+        return list(cached)
+    if now < _GECKO_RETRY_AFTER:
         return list(cached)
     try:
         response = await client.get(
@@ -226,9 +233,19 @@ async def _fetch_gecko_new_launches(client):
             unique.setdefault(item["asset_id"], item)
         result = list(unique.values())[:30]
         _GECKO_LAUNCH_CACHE = (now, result)
+        _GECKO_RETRY_AFTER = 0.0
         return list(result)
-    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-        log.warning("Paper bot GeckoTerminal discovery request failed")
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        retry_after = 300 if status == 429 else 90 if status >= 500 else 300
+        _GECKO_RETRY_AFTER = now + retry_after
+        log.warning("Paper bot GeckoTerminal discovery unavailable (HTTP %s); retrying in %ss; using cached/other sources",
+                    status, retry_after)
+        return list(cached)
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        _GECKO_RETRY_AFTER = now + 120
+        log.warning("Paper bot GeckoTerminal discovery unavailable (%s); retrying in 120s; using cached/other sources",
+                    type(exc).__name__)
         return list(cached)
 
 
