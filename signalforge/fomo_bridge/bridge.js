@@ -117,7 +117,7 @@ class ReadOnlyFomoBrowser {
         this.earlyHeaders.delete(params.requestId);
         this.captureAuth(this.requestUrls.get(params.requestId), early);
       }
-      const match = (params.request?.url || "").match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([0-9a-f-]{36})\/(?:balances|swaps)(?:\?|$)/i);
+      const match = (params.request?.url || "").match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([^/?#]+)\/(?:balances|swaps)(?:\?|$)/i);
       if (match) this.userId = match[1];
       this.resolveAuthWaiters();
     } else if (message.method === "Network.requestWillBeSentExtraInfo") {
@@ -352,7 +352,7 @@ function cleanSwaps(rows, hasNextPage) {
     "humanUsdAmountOut", "inAmount", "inHumanAmount", "inNetworkId",
     "inTokenAddress", "inTradeId", "isCrossmint", "isOffPlatform", "networkId",
     "outAmount", "outHumanAmount", "outNetworkId", "outTokenAddress",
-    "outTradeId", "provider", "signature", "txHash", "transactionHash", "transactionSignature", "inNetworkId", "outNetworkId"
+    "outTradeId", "provider", "signature", "txHash", "transactionHash", "transactionSignature", "txSignature"
   ];
   return {
     swaps: rows.slice(0, 100).map(row => {
