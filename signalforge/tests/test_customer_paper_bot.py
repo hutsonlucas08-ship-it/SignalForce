@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
 from app import customer_data
-from app.customer_paper_bot import monitor_customer_positions, process_customer_accounts
+from app.customer_paper_bot import (_adaptive_position_amount, _runner_assessment,
+                                    monitor_customer_positions, process_customer_accounts)
 from app.db import connect, run_migrations, utcnow
 
 
@@ -47,7 +48,8 @@ def test_customer_paper_trader_can_enter_market_discovery_candidate_without_wall
     ).fetchone()
     assert trade["side"] == "buy"
     assert "independent market momentum" in trade["reason"]
-    assert trade["amount_usd"] == 50
+    assert trade["amount_usd"] == 42.5
+    assert "runner" in trade["reason"] and "size 0.85x" in trade["reason"]
 
 
 def test_customer_paper_trader_keeps_market_only_score_floor_and_reports_rejections():
@@ -121,4 +123,60 @@ def test_shared_risk_monitor_exits_position_after_major_liquidity_drop():
     summary = monitor_customer_positions(conn, {mint: dangerous})
 
     assert summary["risk_exits"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM customer_paper_positions").fetchone()[0] == 0
+
+
+def test_runner_confidence_rewards_wallet_accumulation_and_quality():
+    from app.customer_paper_bot import _runner_assessment
+    pair = _market_pair()
+    market_score = 56.0
+    market_only = _runner_assessment(pair, market_score, {})
+    wallet_confirmed = _runner_assessment(
+        pair, market_score,
+        {"wallet_count": 3, "buy_count": 4, "buy_usd": 15000},
+    )
+    assert wallet_confirmed["score"] > market_only["score"]
+    assert wallet_confirmed["tier"] in {"promising", "strong", "exceptional"}
+    assert any("tracked wallet" in reason for reason in wallet_confirmed["reasons"])
+
+
+def test_adaptive_sizing_allocates_more_to_higher_confidence_but_respects_caps():
+    account = {"cash_balance_usd": 1000, "_equity_usd": 1000}
+    rules = {
+        "position_fraction": 0.10,
+        "max_position_fraction": 0.15,
+    }
+    developing, _ = _adaptive_position_amount(account, rules, 62, 100000)
+    exceptional, multiplier = _adaptive_position_amount(account, rules, 95, 100000)
+    assert exceptional > developing
+    assert exceptional == 150
+    assert multiplier == 1.5
+    # Even exceptional confidence cannot exceed the pool-impact cap.
+    thin_pool, _ = _adaptive_position_amount(account, rules, 95, 5000)
+    assert thin_pool == 50
+
+
+def test_normal_mode_banks_partial_profit_then_protects_remaining_gain():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_customer(conn, "normal")
+    mint = "MarketMint11111111111111111111111111"
+    process_customer_accounts(conn, {mint: _market_pair()}, {})
+    position = conn.execute("SELECT quantity FROM customer_paper_positions").fetchone()
+    original_quantity = float(position["quantity"])
+
+    rally = _market_pair()
+    rally["priceUsd"] = "0.0135"
+    summary = monitor_customer_positions(conn, {mint: rally})
+    remaining = conn.execute(
+        "SELECT quantity,partial_profit_taken FROM customer_paper_positions"
+    ).fetchone()
+    assert summary["partial_exits"] == 1
+    assert remaining["partial_profit_taken"] == 1
+    assert abs(float(remaining["quantity"]) - original_quantity * 0.60) < 1e-8
+
+    pullback = _market_pair()
+    pullback["priceUsd"] = "0.011"
+    summary = monitor_customer_positions(conn, {mint: pullback})
+    assert summary["take_profit_exits"] == 1
     assert conn.execute("SELECT COUNT(*) FROM customer_paper_positions").fetchone()[0] == 0
