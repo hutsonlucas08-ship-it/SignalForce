@@ -192,7 +192,7 @@ async function loadFomoCallouts(){
   }).join(""):'<div class="empty">No assets passed the current freshness, liquidity and volume filters. This is normal; filters are not relaxed to force signals.</div>';
   host.querySelectorAll("[data-copy-mint]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.getAttribute("data-copy-mint"));button.textContent="Copied";}catch(_){button.textContent="Copy unavailable";}}));
   const context=data.fomo_context||{};
-  status.textContent+=" · FOMO context: "+(context.connected_spot_swap_snapshot?(context.observed_spot_swaps+" of your imported swaps"):"not connected");
+  status.textContent+=" · Your swaps: "+(context.connected_spot_swap_snapshot?context.observed_spot_swaps:"not connected")+" · FOMO trader leaderboard: "+(context.trader_leaderboard_captured?(context.trader_leaderboard_rows+" rows captured"):"open the Traders leaderboard in FOMO to capture it");
  }catch(error){status.textContent="Callout scan unavailable: "+error.message;status.classList.add("error");}
 }
 $("refreshCallouts").onclick=loadFomoCallouts;
@@ -214,7 +214,7 @@ async function loadFomoCopilot(){
   await loadFomoCallouts();
   host.innerHTML=snapshots.length?snapshots.map(snapshot=>{
    const payload=snapshot.payload||{};
-   const rows=payload.swaps||payload.clans||[];
+   const rows=payload.swaps||payload.clans||payload.traders||[];
    const label=snapshot.snapshot_type.replaceAll("_"," ").toUpperCase();
    const preview=rows.slice(0,5).map(row=>{
     if(snapshot.snapshot_type==="spot_swaps"){
@@ -222,6 +222,14 @@ async function loadFomoCopilot(){
      const side=typeof display==="object"?(display.side||"SWAP"):(display||"SWAP");
      const amount=row.humanUsdAmountIn||row.humanUsdAmountOut||"—";
      return '<div class="launch-card"><div><strong>'+esc(side)+' · '+esc(amount)+'</strong><small>'+esc(row.provider||"FOMO")+' · '+esc(row.createdAt||"Time unavailable")+'</small><small class="mono">'+esc(row.inTokenAddress||"")+' → '+esc(row.outTokenAddress||"")+'</small></div></div>';
+    }
+    if(snapshot.snapshot_type==="trader_leaderboard"){
+     const user=row.user||{},stats=row.stats||{};
+     const name=user.userHandle||user.displayName||row.userHandle||row.displayName||"FOMO trader";
+     const pnl=row.pnl??row.pnlUsd??stats.pnl??stats.pnlUsd??"—";
+     const winRate=row.winRate??stats.winRate??"—";
+     const trades=row.totalTrades??row.numTrades??stats.totalTrades??stats.numTrades??"—";
+     return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(name)+'</strong><small>Reported P&L '+esc(pnl)+' · Reported win rate '+esc(winRate)+' · Trades '+esc(trades)+'</small><small class="small">Captured from FOMO leaderboard. Not yet independently verified or used as a trade signal.</small></div></div>';
     }
     return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(row.name||"Unnamed clan")+'</strong><small>Members '+esc(row.memberCount??"—")+' · P&L '+esc(row.pnl??"—")+'</small></div></div>';
    }).join("");
