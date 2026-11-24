@@ -67,6 +67,7 @@ class ReadOnlyFomoBrowser {
     this.nextId = 0;
     this.pending = new Map();
     this.authHeader = null;
+    this.cookieHeader = null; // Kept in local memory only; never included in snapshots.
     this.authCapturedAt = 0;
     this.userId = null;
     this.sessionBlocked = false;
@@ -123,34 +124,46 @@ class ReadOnlyFomoBrowser {
       const early = state.earlyHeaders.get(params.requestId);
       if (early) {
         state.earlyHeaders.delete(params.requestId);
-        this.captureAuth(url, early);
+        this.captureCredentials(url, early);
       }
       const match = url.match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([0-9a-f-]{36})\/(?:balances|swaps)(?:\?|$)/i);
       if (match) this.userId = match[1];
       this.resolveAuthWaiters();
     } else if (message.method === "Network.requestWillBeSentExtraInfo") {
       const url = state.requestUrls.get(params.requestId);
-      if (url) this.captureAuth(url, params.headers || {});
+      if (url) this.captureCredentials(url, params.headers || {});
       else state.earlyHeaders.set(params.requestId, params.headers || {});
     }
   }
 
-  captureAuth(url, headers) {
+  captureCredentials(url, headers) {
     if (!String(url || "").startsWith(FOMO_API + "/")) return;
-    const entry = Object.entries(headers || {}).find(([name, value]) =>
+    const entries = Object.entries(headers || {});
+    const authorization = entries.find(([name, value]) =>
       String(name).toLowerCase() === "authorization" &&
       typeof value === "string" && value.startsWith("Bearer ")
     );
-    if (entry) {
-      this.authHeader = entry[1];
+    const cookie = entries.find(([name, value]) =>
+      String(name).toLowerCase() === "cookie" &&
+      typeof value === "string" && value.length > 0
+    );
+    if (authorization) this.authHeader = authorization[1];
+    if (cookie) this.cookieHeader = cookie[1];
+    if (authorization || cookie) {
+      // Credentials stay in this local process and are used only for FOMO GET requests.
+      // Never log them or include them in SignalForce snapshots.
       this.authCapturedAt = Date.now();
       this.sessionBlocked = false;
       this.resolveAuthWaiters();
     }
   }
 
+  hasSessionCredential() {
+    return Boolean(this.authHeader || this.cookieHeader);
+  }
+
   resolveAuthWaiters() {
-    if (!this.authHeader || !this.userId) return;
+    if (!this.hasSessionCredential() || !this.userId) return;
     for (const resolve of this.authWaiters.splice(0)) resolve();
   }
 
@@ -170,7 +183,7 @@ class ReadOnlyFomoBrowser {
   }
 
   async read_network(timeoutMs = 45_000) {
-    if (this.authHeader && this.userId) return;
+    if (this.hasSessionCredential() && this.userId) return;
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(
         "No authenticated FOMO balances/swaps request observed in the page or service worker. Open your FOMO profile or transactions and refresh."
@@ -186,6 +199,7 @@ class ReadOnlyFomoBrowser {
 
   async refreshSession() {
     this.authHeader = null;
+    this.cookieHeader = null;
     this.userId = null;
     try {
       await this.reload();
@@ -235,23 +249,28 @@ async function waitForFomoRateSlot() {
 }
 
 async function fomoGet(browser, path, allowAuthRefresh = true) {
-  if (!browser.authHeader) throw new Error("FOMO session is not authenticated; sign in manually and refresh the FOMO page.");
+  if (!browser.hasSessionCredential()) throw new Error("FOMO session is not authenticated; sign in manually and refresh the FOMO page.");
   if (!path.startsWith("/v2/")) throw new Error("Only verified FOMO read endpoints are allowed.");
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await waitForFomoRateSlot();
+    const requestHeaders = { Accept: "application/json" };
+    if (browser.authHeader) requestHeaders.Authorization = browser.authHeader;
+    if (browser.cookieHeader) requestHeaders.Cookie = browser.cookieHeader;
     const response = await fetch(FOMO_API + path, {
       method: "GET",
-      headers: { Accept: "application/json", Authorization: browser.authHeader || "" },
+      headers: requestHeaders,
       signal: AbortSignal.timeout(15_000),
       cache: "no-store"
     });
     if (response.status === 401 && allowAuthRefresh) {
       browser.authHeader = null;
+      browser.cookieHeader = null;
       await browser.refreshSession();
       return fomoGet(browser, path, false);
     }
     if (response.status === 401) {
       browser.authHeader = null;
+      browser.cookieHeader = null;
       browser.sessionBlocked = true;
       throw new Error("FOMO session expired after one refresh attempt. Sign in manually in Chrome; reads are paused.");
     }
@@ -357,11 +376,11 @@ async function pollOnce(browser) {
   if (pollRunning) return;
   pollRunning = true;
   try {
-    if (browser.sessionBlocked && !browser.authHeader) {
+    if (browser.sessionBlocked && !browser.hasSessionCredential()) {
       process.stdout.write("FOMO session paused. Sign in manually in the FOMO Chrome window; reads resume after a fresh authenticated request.\n");
       return;
     }
-    if (!browser.authHeader || !browser.userId ||
+    if (!browser.hasSessionCredential() || !browser.userId ||
         Date.now() - browser.authCapturedAt > 55 * 60 * 1000) {
       await browser.refreshSession();
     }
