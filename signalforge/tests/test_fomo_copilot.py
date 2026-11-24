@@ -164,3 +164,76 @@ def test_trader_leaderboard_snapshot_persists_with_new_schema_migration():
     assert response.status_code == 200
     snapshots = client.get("/v1/customer/fomo-copilot").json()["snapshots"]
     assert any(item["snapshot_type"] == "trader_leaderboard_7d" for item in snapshots)
+
+
+
+def test_bridge_targets_requires_pairing_and_returns_only_strictly_qualified_traders():
+    client = _client()
+    assert client.get("/v1/customer/fomo-copilot/bridge-targets").status_code == 401
+    csrf = _signed_in(client, "qualified-targets@example.test")
+    pairing = client.post(
+        "/v1/customer/fomo-copilot/pairing",
+        headers={"X-CSRF-Token": csrf},
+        json={},
+    )
+    assert pairing.status_code == 200
+    paired = client.post(
+        "/v1/customer/fomo-copilot/pair",
+        json={"pairing_code": pairing.json()["pairing_code"]},
+    )
+    assert paired.status_code == 200
+    bridge_key = paired.json()["bridge_key"]
+    row = {
+        "user": {"id": "qualified-trader-1", "userHandle": "qualified"},
+        "stats": {
+            "pnlUsd": 1200,
+            "winRate": 0.61,
+            "totalTrades": 25,
+            "medianHoldMinutes": 18,
+            "maxSingleTokenPnlShare": 0.25,
+        },
+    }
+    for window in ("24h", "7d"):
+        saved = client.post(
+            "/v1/customer/fomo-copilot/snapshot",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "snapshot_type": "trader_leaderboard_" + window,
+                "payload": {"window": window, "traders": [row]},
+            },
+        )
+        assert saved.status_code == 200
+    targets = client.get(
+        "/v1/customer/fomo-copilot/bridge-targets",
+        headers={"X-Fomo-Bridge-Key": bridge_key},
+    )
+    assert targets.status_code == 200
+    assert targets.json()["count"] == 1
+    assert targets.json()["qualified_traders"][0]["user_id"] == "qualified-trader-1"
+
+
+def test_trader_spot_swap_snapshot_accepts_only_sanitized_trader_rows():
+    from app.fomo_copilot import FomoSnapshotError, validate_snapshot
+
+    encoded = validate_snapshot("trader_spot_swaps", {
+        "traders": [{
+            "user_id": "trader-1",
+            "handle": "example",
+            "swaps": [{
+                "id": "fomo-swap-id",
+                "createdAt": "2026-11-24T20:00:00Z",
+                "display": {"side": "buy"},
+                "outTokenAddress": "mint-address",
+                "signature": "provided-chain-signature",
+            }],
+        }]
+    })
+    assert '"outTokenAddress":"mint-address"' in encoded
+    try:
+        validate_snapshot("trader_spot_swaps", {
+            "traders": [{"user_id": "trader-1", "swaps": [{"authorization": "secret"}]}]
+        })
+    except FomoSnapshotError:
+        pass
+    else:
+        raise AssertionError("trader swap snapshots must reject credentials")
