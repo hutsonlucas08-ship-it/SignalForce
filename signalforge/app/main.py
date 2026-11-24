@@ -19,7 +19,7 @@ from . import store
 from .auth import Principal, RateLimiter, _fp, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
-from . import customer_auth, customer_data, customer_integrations, customer_email
+from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
@@ -194,40 +194,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         app.state.customer_auth_limiter.check(action + ":" + host)
 
     @app.post("/v1/customer/register", status_code=201)
-    async def customer_register(body: CustomerRegisterRequest, request: Request, conn=Depends(get_conn)):
-        """Create a pending account and email a one-time verification link."""
+    def customer_register(body: CustomerRegisterRequest, request: Request, response: Response, conn=Depends(get_conn)):
+        """Create an account and sign the customer in immediately; no email delivery is required."""
         customer_rate_limit(request, "register")
         try:
             account_id = customer_auth.register_customer_account(conn, body.email, body.password)
-            token = customer_auth.create_email_verification_token(conn, account_id)
-            await customer_email.send_verification_email(body.email.strip().lower(), token)
+            session = customer_auth.create_customer_session(conn, account_id)
         except customer_auth.CustomerAuthError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        except customer_email.EmailDeliveryError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-        return {"status": "pending_verification", "message": "Account created. Check your inbox and verify your email before signing in."}
-
-    @app.post("/v1/customer/verification/resend")
-    async def customer_resend_verification(body: CustomerActivateRequest, request: Request, conn=Depends(get_conn)):
-        customer_rate_limit(request, "verification")
         email = body.email.strip().lower()
-        row = conn.execute("SELECT id,status FROM customer_accounts WHERE LOWER(email)=LOWER(?)", (email,)).fetchone()
-        # Generic response prevents account enumeration.
-        if row is not None and row["status"] == "pending":
-            token = customer_auth.create_email_verification_token(conn, row["id"])
-            try:
-                await customer_email.send_verification_email(email, token)
-            except customer_email.EmailDeliveryError as exc:
-                raise HTTPException(status_code=503, detail=str(exc))
-        return {"message": "If the account is awaiting verification, a new link has been sent."}
-
-    @app.get("/v1/customer/verify-email")
-    def customer_verify_email(token: str, conn=Depends(get_conn)):
-        if not customer_auth.consume_email_verification_token(conn, token):
-            raise HTTPException(status_code=400, detail="This verification link is invalid, expired, or already used. Request a new link.")
-        return {"verified": True, "message": "Email verified. You can now sign in to SignalForce."}
+        secure_cookie = os.getenv("SIGNALFORCE_COOKIE_SECURE", "true").lower() != "false"
+        response.set_cookie("sf_customer_session", session["session_token"], httponly=True,
+                            secure=secure_cookie, samesite="strict", max_age=86400, path="/")
+        return {"status": "active", "authenticated": True, "email": email,
+                "csrf_token": session["csrf_token"], "expires_at": session["expires_at"],
+                "message": "Account created. You're signed in to SignalForce."}
 
     @app.post("/v1/customer/login")
     def customer_login(body: CustomerLoginRequest, request: Request, response: Response, conn=Depends(get_conn)):
