@@ -452,7 +452,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/terminal", include_in_schema=False)
     def public_terminal():
-        """Serve the public market-intelligence terminal."""
+        """Serve the customer-facing paper-trading terminal without operator API keys."""
+        return FileResponse(Path(__file__).parent / "static" / "customer.html")
+
+    @app.get("/operator", include_in_schema=False)
+    def operator_terminal():
+        """Serve the legacy operator research terminal; its APIs remain read-key gated."""
         return FileResponse(Path(__file__).parent / "static" / "index.html")
 
     @app.get("/", include_in_schema=False)
