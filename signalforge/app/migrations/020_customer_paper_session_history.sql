@@ -1,2 +1,3 @@
--- Track the start of each automated paper session so its dashboard history is session-specific.
-ALTER TABLE customer_paper_accounts ADD COLUMN auto_started_at TEXT;
+-- Isolate automated customer paper trade history into explicit sessions.
+ALTER TABLE customer_paper_accounts ADD COLUMN auto_session_id TEXT;
+ALTER TABLE customer_paper_trades ADD COLUMN paper_session_id TEXT;
