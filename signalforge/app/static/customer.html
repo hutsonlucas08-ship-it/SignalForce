@@ -237,7 +237,11 @@ async function loadFomoCopilot(){
      const pnl=row.pnl??row.pnlUsd??stats.pnl??stats.pnlUsd??"—";
      const winRate=row.winRate??stats.winRate??"—";
      const trades=row.totalTrades??row.numTrades??stats.totalTrades??stats.numTrades??"—";
-     return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(name)+'</strong><small>Reported P&L '+esc(pnl)+' · Reported win rate '+esc(winRate)+' · Trades '+esc(trades)+'</small><small class="small">Captured from FOMO leaderboard. Not yet independently verified or used as a trade signal.</small></div></div>';
+     return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(name)+'</strong><small>Reported P&L '+esc(pnl)+' · Reported win rate '+esc(winRate)+' · Trades '+esc(trades)+'</small><small class="small">Captured from FOMO leaderboard. Missing evidence fails qualification; not chain-verified.</small></div></div>';
+    }
+    if(snapshot.snapshot_type==="trader_spot_swaps"){
+     const swaps=row.swaps||[];
+     return '<div class="launch-card"><div><strong>'+esc(row.handle||row.user_id||"Qualified trader")+'</strong><small>'+swaps.length+' recent spot swaps captured · '+esc(row.observed_at||"Time unavailable")+'</small><small class="small">Read-only FOMO activity; not independently chain-verified.</small></div></div>';
     }
     return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(row.name||"Unnamed clan")+'</strong><small>Members '+esc(row.memberCount??"—")+' · P&L '+esc(row.pnl??"—")+'</small></div></div>';
    }).join("");
