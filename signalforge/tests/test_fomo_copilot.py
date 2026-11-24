@@ -111,6 +111,7 @@ def test_local_bridge_exposes_no_dom_input_or_wallet_signing_surface():
     assert 'this.send("page.reload"' in source
     assert "allowed_cdp_methods" in source
     assert "if (!allowed_cdp_methods.has(method))" in source
+    assert '"Network.getResponseBody"' in source
 
 
 
@@ -120,3 +121,25 @@ def test_manual_callout_endpoint_requires_customer_and_valid_limit():
     _signed_in(client, "callouts@example.test")
     assert client.get("/v1/customer/fomo-copilot/callouts?limit=0").status_code == 422
     assert client.get("/v1/customer/fomo-copilot/callouts?limit=51").status_code == 422
+
+
+
+def test_trader_leaderboard_snapshot_accepts_sanitized_rows_only():
+    from app.fomo_copilot import FomoSnapshotError, validate_snapshot
+
+    encoded = validate_snapshot("trader_leaderboard", {
+        "traders": [{
+            "rank": 1,
+            "user": {"userHandle": "example"},
+            "stats": {"winRate": 0.62, "totalTrades": 25},
+        }]
+    })
+    assert '"userHandle":"example"' in encoded
+    try:
+        validate_snapshot("trader_leaderboard", {
+            "traders": [{"user": {"accessToken": "must-not-store"}}]
+        })
+    except FomoSnapshotError:
+        pass
+    else:
+        raise AssertionError("leaderboard snapshots must reject credential fields")
