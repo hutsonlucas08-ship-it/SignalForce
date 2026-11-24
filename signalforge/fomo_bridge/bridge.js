@@ -59,13 +59,13 @@ function hiddenInput(promptText) {
 }
 
 class ReadOnlyFomoBrowser {
-  constructor(tab) {
-    this.tab = tab;
-    this.ws = null;
+  constructor(pageTab, networkTabs) {
+    this.pageTab = pageTab;
+    this.networkTabs = networkTabs;
+    this.pageWs = null;
+    this.networkSockets = [];
     this.nextId = 0;
     this.pending = new Map();
-    this.requestUrls = new Map();
-    this.earlyHeaders = new Map();
     this.authHeader = null;
     this.authCapturedAt = 0;
     this.userId = null;
@@ -74,28 +74,38 @@ class ReadOnlyFomoBrowser {
   }
 
   async connect() {
-    this.ws = new WebSocket(this.tab.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      this.ws.addEventListener("open", resolve, { once: true });
-      this.ws.addEventListener("error", () => reject(new Error("Could not connect to the local Chrome debugging session.")), { once: true });
-    });
-    this.ws.addEventListener("message", event => this.onMessage(event.data));
-    await this.send("Network.enable");
-    await this.send("Page.enable");
+    // Listen to the FOMO page AND its service-worker targets. FOMO may issue
+    // authenticated API calls from a service worker rather than the page.
+    for (const tab of this.networkTabs) {
+      const ws = new WebSocket(tab.webSocketDebuggerUrl);
+      await new Promise((resolve, reject) => {
+        ws.addEventListener("open", resolve, { once: true });
+        ws.addEventListener("error", () => reject(new Error("Could not connect to a local FOMO Chrome target.")), { once: true });
+      });
+      const state = { ws, requestUrls: new Map(), earlyHeaders: new Map(), isPage: tab.id === this.pageTab.id };
+      ws.addEventListener("message", event => this.onMessage(state, event.data));
+      this.networkSockets.push(state);
+      await this.send(state, "Network.enable");
+      if (state.isPage) {
+        this.pageWs = ws;
+        await this.send(state, "Page.enable");
+      }
+    }
+    if (!this.pageWs) throw new Error("Could not attach to the FOMO page target.");
   }
 
-  send(method, params = {}) {
+  send(state, method, params = {}) {
     if (!ALLOWED_CDP_METHODS.has(method)) {
       throw new Error("This bridge blocks all browser commands outside its read-only allowlist.");
     }
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
+      state.ws.send(JSON.stringify({ id, method, params }));
     });
   }
 
-  onMessage(raw) {
+  onMessage(state, raw) {
     let message;
     try { message = JSON.parse(String(raw)); } catch (_) { return; }
     if (message.id) {
@@ -108,19 +118,20 @@ class ReadOnlyFomoBrowser {
     }
     const params = message.params || {};
     if (message.method === "Network.requestWillBeSent") {
-      this.requestUrls.set(params.requestId, params.request?.url || "");
-      const early = this.earlyHeaders.get(params.requestId);
+      const url = params.request?.url || "";
+      state.requestUrls.set(params.requestId, url);
+      const early = state.earlyHeaders.get(params.requestId);
       if (early) {
-        this.earlyHeaders.delete(params.requestId);
-        this.captureAuth(this.requestUrls.get(params.requestId), early);
+        state.earlyHeaders.delete(params.requestId);
+        this.captureAuth(url, early);
       }
-      const match = (params.request?.url || "").match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([0-9a-f-]{36})\/(?:balances|swaps)(?:\?|$)/i);
+      const match = url.match(/^https:\/\/prod-api\.fomo\.family\/v2\/users\/([0-9a-f-]{36})\/(?:balances|swaps)(?:\?|$)/i);
       if (match) this.userId = match[1];
       this.resolveAuthWaiters();
     } else if (message.method === "Network.requestWillBeSentExtraInfo") {
-      const url = this.requestUrls.get(params.requestId);
+      const url = state.requestUrls.get(params.requestId);
       if (url) this.captureAuth(url, params.headers || {});
-      else this.earlyHeaders.set(params.requestId, params.headers || {});
+      else state.earlyHeaders.set(params.requestId, params.headers || {});
     }
   }
 
@@ -143,39 +154,39 @@ class ReadOnlyFomoBrowser {
     for (const resolve of this.authWaiters.splice(0)) resolve();
   }
 
-  // Browser surface 1/4: navigation is restricted to FOMO coin/profile pages.
   async open(url) {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" || parsed.hostname !== "fomo.family" ||
         !/(^|\/)(coin|profile)(\/|$)/i.test(parsed.pathname)) {
       throw new Error("Only FOMO coin and profile pages may be opened.");
     }
-    return this.send("Page.navigate", { url: parsed.href });
+    const pageState = this.networkSockets.find(state => state.isPage);
+    return this.send(pageState, "Page.navigate", { url: parsed.href });
   }
 
-  // Browser surface 2/4: screenshot is read-only and stays in memory.
   async screenshot() {
-    return this.send("Page.captureScreenshot", { format: "png", fromSurface: true });
+    const pageState = this.networkSockets.find(state => state.isPage);
+    return this.send(pageState, "Page.captureScreenshot", { format: "png", fromSurface: true });
   }
 
-  // Browser surface 3/4: observe FOMO's own network requests; never print the header.
-  async read_network(timeoutMs = 30_000) {
+  async read_network(timeoutMs = 45_000) {
     if (this.authHeader && this.userId) return;
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(
-        "No authenticated FOMO API request observed. Sign in to FOMO and refresh its page."
+        "No authenticated FOMO balances/swaps request observed in the page or service worker. Open your FOMO profile or transactions and refresh."
       )), timeoutMs);
       this.authWaiters.push(() => { clearTimeout(timer); resolve(); });
     });
   }
 
-  // Browser surface 4/4: reload only the already-open FOMO page.
   async reload() {
-    await this.send("Page.reload", { ignoreCache: true });
+    const pageState = this.networkSockets.find(state => state.isPage);
+    return this.send(pageState, "Page.reload", { ignoreCache: true });
   }
 
   async refreshSession() {
     this.authHeader = null;
+    this.userId = null;
     try {
       await this.reload();
       await this.read_network();
@@ -190,11 +201,16 @@ async function connectFomoBrowser() {
   const response = await fetch(CHROME_DEBUG + "/json/list");
   if (!response.ok) throw new Error("Chrome debugging endpoint is unavailable on 127.0.0.1:9334.");
   const tabs = await response.json();
-  const tab = tabs.find(item => item.type === "page" && /^https:\/\/fomo\.family\//i.test(item.url || ""));
-  if (!tab?.webSocketDebuggerUrl) {
+  const pageTab = tabs.find(item => item.type === "page" && /^https:\/\/fomo\.family\//i.test(item.url || ""));
+  if (!pageTab?.webSocketDebuggerUrl) {
     throw new Error("Open FOMO in the dedicated Chrome profile on port 9334, then run this bridge again.");
   }
-  const browser = new ReadOnlyFomoBrowser(tab);
+  const networkTabs = tabs.filter(item =>
+    item.webSocketDebuggerUrl &&
+    ((item.type === "page" && /^https:\/\/fomo\.family\//i.test(item.url || "")) ||
+     (item.type === "service_worker" && /^https:\/\/fomo\.family\//i.test(item.url || "")))
+  );
+  const browser = new ReadOnlyFomoBrowser(pageTab, networkTabs);
   await browser.connect();
   return browser;
 }
