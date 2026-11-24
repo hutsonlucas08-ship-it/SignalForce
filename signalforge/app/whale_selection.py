@@ -46,10 +46,10 @@ def _metric(row, keys):
 
 def _identity(row):
     user = row.get("user") if isinstance(row.get("user"), dict) else {}
-    user_id = user.get("userId") or user.get("id") or row.get("userId")
+    user_id = user.get("userId") or user.get("user_id") or user.get("id") or row.get("userId") or row.get("user_id")
     if not isinstance(user_id, str) or not user_id.strip():
         return None
-    handle = user.get("userHandle") or user.get("displayName") or row.get("userHandle") or "FOMO trader"
+    handle = user.get("userHandle") or user.get("handle") or user.get("username") or user.get("displayName") or row.get("userHandle") or row.get("handle") or row.get("username") or "FOMO trader"
     return user_id.strip(), str(handle)[:80]
 
 
@@ -97,15 +97,15 @@ def qualify_traders(snapshots, *, limit=25):
             reasons.append("missing_7d_leaderboard")
             metrics = {}
         else:
-            pnl = _metric(row, ("pnlUsd", "pnl", "profitUsd", "profit"))
-            win_rate = _metric(row, ("winRate",))
-            trades = _metric(row, ("totalTrades", "numTrades", "swapCount"))
-            hold_minutes = _metric(row, ("medianHoldMinutes",))
-            hold_seconds = _metric(row, ("medianHoldSeconds",))
+            pnl = _metric(row, ("pnlUsd", "pnl", "profitUsd", "profit", "pnl_usd"))
+            win_rate = _metric(row, ("winRate", "win_rate"))
+            trades = _metric(row, ("totalTrades", "numTrades", "swapCount", "total_trades"))
+            hold_minutes = _metric(row, ("medianHoldMinutes", "median_hold_minutes"))
+            hold_seconds = _metric(row, ("medianHoldSeconds", "median_hold_seconds"))
             if hold_minutes is None and hold_seconds is not None:
                 hold_minutes = hold_seconds / 60.0
             concentration = _metric(row, (
-                "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
+                "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare", "max_single_token_pnl_share"
             ))
             if win_rate is not None and win_rate > 1:
                 win_rate /= 100.0
