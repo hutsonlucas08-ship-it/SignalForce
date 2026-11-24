@@ -381,3 +381,46 @@ def test_sqlite_to_postgres_data_transfer_round_trip(tmp_path):
         )
         target.commit()
         target.close()
+
+
+def test_postgres_customer_automated_paper_traders_are_isolated_and_leased(postgres_connection):
+    from app.customer_data import get_customer_paper_trader, start_customer_paper_trader
+    from app.customer_paper_bot import (
+        _claim_worker_lease, _release_worker_lease, process_customer_accounts,
+    )
+
+    conn = postgres_connection
+    account_a = register_customer_account(
+        conn, uuid.uuid4().hex + "@paper-a.test", "correct horse battery staple"
+    )
+    account_b = register_customer_account(
+        conn, uuid.uuid4().hex + "@paper-b.test", "correct horse battery staple"
+    )
+    trader_a = start_customer_paper_trader(conn, account_a, 1000, 100, "gradual")
+    trader_b = start_customer_paper_trader(conn, account_b, 2500, 750, "aggressive")
+    assert trader_a["cash_balance_usd"] == 1000
+    assert trader_b["cash_balance_usd"] == 2500
+
+    place_paper_trade(
+        conn, account_a, trader_a["id"], asset_id="postgres-paper-mint",
+        side="buy", amount_usd=100, price_usd=1, automated=True,
+    )
+    pair = {"priceUsd": "2", "baseToken": {"name": "Postgres Paper Token"}}
+    result = process_customer_accounts(conn, {"postgres-paper-mint": pair}, {})
+    assert result["sells"] == 1
+    assert result["targets_reached"] == 1
+
+    reached = get_customer_paper_trader(conn, account_a)
+    untouched = get_customer_paper_trader(conn, account_b)
+    assert reached["auto_status"] == "target_reached"
+    assert reached["profit_usd"] == 100
+    assert untouched["is_running"] is True
+    assert untouched["cash_balance_usd"] == 2500
+    assert untouched["positions"] == []
+
+    assert len(list_paper_trades(conn, account_a, trader_a["id"])) == 2
+    assert _claim_worker_lease(conn, "postgres-worker-a") is True
+    assert _claim_worker_lease(conn, "postgres-worker-b") is False
+    _release_worker_lease(conn, "postgres-worker-a")
+    assert _claim_worker_lease(conn, "postgres-worker-b") is True
+    _release_worker_lease(conn, "postgres-worker-b")
