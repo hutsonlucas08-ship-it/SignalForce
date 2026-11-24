@@ -49,6 +49,11 @@ def test_qmark_parameter_translation_preserves_question_marks_in_literals():
 def test_postgres_paper_bot_claim_uses_row_lock():
     sql = "SELECT lock_owner,lock_until_epoch FROM paper_bot_state WHERE id=1"
     assert _postgres_runtime_sql(sql).endswith("FOR UPDATE")
+    extended = (
+        "SELECT id,cash_balance_usd,auto_session_id,enabled,auto_status "
+        "FROM customer_paper_accounts WHERE id=? AND account_id=?"
+    )
+    assert _postgres_runtime_sql(extended).endswith("FOR UPDATE")
 
 
 def test_postgres_runtime_translates_immediate_begin():
