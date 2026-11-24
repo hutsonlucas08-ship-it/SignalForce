@@ -30,6 +30,7 @@ log = logging.getLogger("signalforge")
 _price_history = {}
 _bubble_cache = {}
 _launch_cache = {}
+_launch_retry_after = {}
 
 
 class HaltRequest(BaseModel):
@@ -793,6 +794,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         cached = _launch_cache.get("solana")
         if cached and now - cached[0] < 45:
             return cached[1]
+        if now < _launch_retry_after.get("solana", 0):
+            if cached:
+                stale = dict(cached[1])
+                stale["stale"] = True
+                stale["note"] = "Showing cached launch data while GeckoTerminal recovers."
+                return stale
+            return {"launches": [], "count": 0, "source": "fallback", "stale": True,
+                    "note": "GeckoTerminal is temporarily unavailable; wallet and market discovery continue."}
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 response = await client.get(
@@ -851,10 +860,31 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "note": "New pool creation is a discovery signal, not proof of a legitimate launch or a safe token. Artwork is provider-supplied and may be unavailable.",
             }
             _launch_cache["solana"] = (now, result)
+            _launch_retry_after["solana"] = 0
             return result
-        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-            log.warning("GeckoTerminal new-pools feed unavailable")
-            raise HTTPException(status_code=502, detail="GeckoTerminal's Solana new-pools feed is temporarily unavailable")
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            retry_after = 300 if status == 429 else 90 if status >= 500 else 180
+            _launch_retry_after["solana"] = now + retry_after
+            log.warning("GeckoTerminal new-pools feed unavailable (HTTP %s); retrying in %ss", status, retry_after)
+            if cached:
+                stale = dict(cached[1])
+                stale["stale"] = True
+                stale["note"] = "Showing cached launch data while GeckoTerminal recovers."
+                return stale
+            return {"launches": [], "count": 0, "source": "fallback", "stale": True,
+                    "note": "GeckoTerminal is temporarily unavailable; wallet and market discovery continue."}
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+            _launch_retry_after["solana"] = now + 120
+            log.warning("GeckoTerminal new-pools feed unavailable (%s); retrying in 120s",
+                        type(exc).__name__)
+            if cached:
+                stale = dict(cached[1])
+                stale["stale"] = True
+                stale["note"] = "Showing cached launch data while GeckoTerminal recovers."
+                return stale
+            return {"launches": [], "count": 0, "source": "fallback", "stale": True,
+                    "note": "GeckoTerminal is temporarily unavailable; wallet and market discovery continue."}
 
     @app.get("/v1/research/trending-now")
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
