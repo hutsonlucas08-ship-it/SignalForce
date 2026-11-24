@@ -140,7 +140,6 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "017_remove_email_verification_requirement.sql",
         "018_customer_automated_paper_trader.sql",
         "019_customer_paper_bot_lease.sql",
-        "018_customer_automated_paper_trader.sql",
     ]
     assert run_migrations(conn) == []
     state = conn.execute("SELECT enabled FROM paper_bot_state WHERE id=1").fetchone()
