@@ -117,3 +117,51 @@ def test_customer_trading_data_cascades_when_account_is_deleted():
     conn.commit()
     assert conn.execute("SELECT COUNT(*) FROM customer_tracked_wallets").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM customer_paper_accounts").fetchone()[0] == 0
+
+
+def test_repair_migration_recovers_database_with_020_already_recorded(tmp_path):
+    import hashlib
+    from pathlib import Path
+
+    from app.db import run_migrations
+
+    conn = connect(":memory:")
+    conn.execute(
+        "CREATE TABLE customer_paper_accounts (id TEXT PRIMARY KEY, auto_started_at TEXT)"
+    )
+    conn.execute("CREATE TABLE customer_paper_trades (id TEXT PRIMARY KEY)")
+    original_020 = (
+        "-- Track the start of each automated paper session so its dashboard history is session-specific.\\n"
+        "ALTER TABLE customer_paper_accounts ADD COLUMN auto_started_at TEXT;\\n"
+    )
+    migration_dir = tmp_path / "migrations"
+    migration_dir.mkdir()
+    (migration_dir / "020_customer_paper_session_history.sql").write_text(original_020)
+    (migration_dir / "021_repair_customer_paper_session_columns.sql").write_text(
+        "ALTER TABLE customer_paper_accounts ADD COLUMN IF NOT EXISTS auto_session_id TEXT;\\n"
+        "ALTER TABLE customer_paper_trades ADD COLUMN IF NOT EXISTS paper_session_id TEXT;\\n"
+    )
+    conn.execute(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO schema_migrations(name, checksum, applied_at) VALUES(?,?,?)",
+        (
+            "020_customer_paper_session_history.sql",
+            hashlib.sha256(original_020.encode()).hexdigest(),
+            utcnow(),
+        ),
+    )
+    conn.commit()
+
+    assert run_migrations(conn, directory=migration_dir) == [
+        "021_repair_customer_paper_session_columns.sql"
+    ]
+    account_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(customer_paper_accounts)")
+    }
+    trade_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(customer_paper_trades)")
+    }
+    assert {"auto_started_at", "auto_session_id"} <= account_columns
+    assert "paper_session_id" in trade_columns
