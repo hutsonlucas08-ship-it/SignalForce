@@ -178,7 +178,7 @@ class ReadOnlyFomoBrowser {
             "following", "numTrades", "swapCount", "totalVolume", "verified"
           ]),
           stats: pick(stats, [
-            "pnl", "pnlUsd", "profit", "roi", "roiPct", "winRate",
+            "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct", "winRate",
             "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
           ])
         };
