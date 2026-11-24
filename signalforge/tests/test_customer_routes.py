@@ -181,3 +181,14 @@ def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
     assert paused.json()["paper_trader"]["is_running"] is False
     assert client_b.post("/v1/customer/paper-trader/pause",
                          headers={"X-CSRF-Token": csrf_b}, json={}).json()["paper_trader"] is None
+
+def test_public_terminal_route_serves_market_terminal_and_customer_workspace_links_back():
+    client = _client()
+    terminal = client.get("/terminal")
+    assert terminal.status_code == 200
+    assert "SignalForce — Solana Intelligence" in terminal.text
+    assert 'href="/account"' in terminal.text
+    account = client.get("/account")
+    assert account.status_code == 200
+    assert 'href="/terminal"' in account.text
+
