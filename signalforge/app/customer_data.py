@@ -222,7 +222,7 @@ def place_paper_trade(
 
 def get_customer_paper_trader(conn, account_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
-    if row is None:
+    if row is None or row["auto_status"] == "setup":
         return None
     account = dict(row)
     positions = conn.execute(
