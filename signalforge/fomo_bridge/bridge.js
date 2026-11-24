@@ -12,7 +12,7 @@ const POLL_MS = 60_000;
 const MAX_SWAP_PAGES = 4;
 const BASE_GAP_MS = 1_200;
 const MAX_GAP_MS = 20_000;
-const ALLOWED_CDP_METHODS = new Set(["Network.enable", "Page.enable", "Page.navigate", "Page.captureScreenshot", "Page.reload"]);
+const ALLOWED_CDP_METHODS = new Set(["Network.enable", "Network.getResponseBody", "Page.enable", "Page.navigate", "Page.captureScreenshot", "Page.reload"]);
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let bridgeKey = "";
@@ -71,6 +71,7 @@ class ReadOnlyFomoBrowser {
     this.userId = null;
     this.sessionBlocked = false;
     this.authWaiters = [];
+    this.leaderboardRequests = new Set();
   }
 
   async connect() {
@@ -121,6 +122,65 @@ class ReadOnlyFomoBrowser {
       const url = this.requestUrls.get(params.requestId);
       if (url) this.captureAuth(url, params.headers || {});
       else this.earlyHeaders.set(params.requestId, params.headers || {});
+    } else if (message.method === "Network.responseReceived") {
+      const url = this.requestUrls.get(params.requestId) || params.response?.url || "";
+      if (url.startsWith(FOMO_API + "/") && /leaderboard|top.?traders|traders/i.test(url) &&
+          !this.leaderboardRequests.has(params.requestId)) {
+        this.leaderboardRequests.add(params.requestId);
+        this.captureTraderLeaderboard(params.requestId, url).catch(() => {});
+      }
+    }
+  }
+
+  async captureTraderLeaderboard(requestId, url) {
+    try {
+      const response = await this.send("Network.getResponseBody", { requestId });
+      const raw = response.base64Encoded
+        ? Buffer.from(response.body || "", "base64").toString("utf8")
+        : String(response.body || "");
+      if (!raw || raw.length > 500_000) return;
+      const payload = JSON.parse(raw);
+      const body = payload?.responseObject || payload;
+      const candidates = [
+        body?.leaderboard, body?.topTraders, body?.traders,
+        body?.users, body?.items, payload?.leaderboard
+      ];
+      const rows = candidates.find(Array.isArray);
+      if (!rows?.length) return;
+      const traders = rows.slice(0, 50).map(row => {
+        const user = row?.user || row?.profile || row?.trader || {};
+        const stats = row?.stats || row?.performance || {};
+        const clean = {
+          ...pick(row, [
+            "rank", "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct",
+            "winRate", "totalTrades", "numTrades", "swapCount", "totalVolume",
+            "volumeUsd", "followers", "verified"
+          ]),
+          user: pick(user, [
+            "id", "userId", "userHandle", "displayName", "followers",
+            "following", "numTrades", "swapCount", "totalVolume", "verified"
+          ]),
+          stats: pick(stats, [
+            "pnl", "pnlUsd", "profit", "roi", "roiPct", "winRate",
+            "totalTrades", "numTrades", "swapCount", "totalVolume", "volumeUsd"
+          ])
+        };
+        return clean;
+      }).filter(row => Object.keys(row).some(key =>
+        key !== "user" && key !== "stats" && row[key] !== undefined
+      ) || Object.keys(row.user).length > 0 || Object.keys(row.stats).length > 0);
+      if (!traders.length) return;
+      const urlObject = new URL(url);
+      const window = urlObject.searchParams.get("window") || urlObject.searchParams.get("period") || "unknown";
+      await sendSnapshot("trader_leaderboard", {
+        traders,
+        window: String(window).slice(0, 24),
+        endpoint_path: urlObject.pathname.slice(0, 180),
+        note: "Captured passively from the authenticated FOMO page. Field availability varies; rankings are not independently verified."
+      });
+      process.stdout.write("FOMO trader leaderboard snapshot captured · " + traders.length + " rows.\n");
+    } catch (_) {
+      // A response that is not JSON or whose body has already expired is ignored.
     }
   }
 
