@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app import customer_data
-from app.customer_paper_bot import (_adaptive_position_amount, _runner_assessment,
+from app.customer_paper_bot import (_adaptive_position_amount, _recent_fomo_buy_signals, _runner_assessment,
                                     monitor_customer_positions, process_customer_accounts)
 from app.db import connect, run_migrations, utcnow
 
@@ -180,3 +180,37 @@ def test_normal_mode_banks_partial_profit_then_protects_remaining_gain():
     summary = monitor_customer_positions(conn, {mint: pullback})
     assert summary["take_profit_exits"] == 1
     assert conn.execute("SELECT COUNT(*) FROM customer_paper_positions").fetchone()[0] == 0
+
+
+def test_fomo_buy_observations_are_opt_in_fresh_and_discovery_only():
+    import json
+    from datetime import timedelta
+
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_customer(conn)
+    mint = "So11111111111111111111111111111111111111112"
+    now = datetime.now(timezone.utc)
+    swaps = [
+        {"id": "fresh-buy", "createdAt": now.isoformat(), "display": {"side": "buy"},
+         "outTokenAddress": mint, "isOffPlatform": False, "isCrossmint": False},
+        {"id": "old-buy", "createdAt": (now - timedelta(minutes=30)).isoformat(),
+         "display": {"side": "buy"}, "outTokenAddress": "So11111111111111111111111111111111111111113"},
+        {"id": "sell", "createdAt": now.isoformat(), "display": {"side": "sell"},
+         "outTokenAddress": "So11111111111111111111111111111111111111114"},
+    ]
+    conn.execute("UPDATE customer_paper_accounts SET fomo_signals_enabled=1 WHERE account_id='customer-a'")
+    conn.execute(
+        "INSERT INTO customer_fomo_snapshots(account_id,snapshot_type,payload_json,source,observed_at,created_at) "
+        "VALUES('customer-a','spot_swaps',?,'test',?,?)",
+        (json.dumps({"swaps": swaps}), now.isoformat(), now.isoformat()),
+    )
+    conn.commit()
+
+    signals = _recent_fomo_buy_signals(conn)
+    assert list(signals["customer-a"]) == [mint]
+    assert signals["customer-a"][mint]["swap_id"] == "fresh-buy"
+
+    conn.execute("UPDATE customer_paper_accounts SET fomo_signals_enabled=0 WHERE account_id='customer-a'")
+    conn.commit()
+    assert _recent_fomo_buy_signals(conn) == {}
