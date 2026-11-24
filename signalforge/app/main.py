@@ -514,6 +514,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     continue
                 if age_seconds < 0 or age_seconds > 300:
                     continue
+                created_at_utc = parsed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 activity = fresh_trader_buys.setdefault(mint, {
                     "buy_count": 0,
                     "traders": [],
@@ -523,8 +524,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 activity["buy_count"] += 1
                 if handle not in activity["traders"]:
                     activity["traders"].append(handle)
-                if activity["latest_buy_at"] is None or created_at > activity["latest_buy_at"]:
-                    activity["latest_buy_at"] = created_at
+                if activity["latest_buy_at"] is None or created_at_utc > activity["latest_buy_at"]:
+                    activity["latest_buy_at"] = created_at_utc
 
         assets = scan_assets(conn, limit)
         known_mints = {item.get("asset_id") for item in assets}
@@ -537,7 +538,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 ).astimezone(timezone.utc)
                 assets.append({
                     "asset_id": mint,
-                    "token_name": mint[:8],
+                    "token_name": "",
                     "latest_collected_at": latest_buy.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "discovery_source": "recent FOMO-qualified trader buy",
                 })
