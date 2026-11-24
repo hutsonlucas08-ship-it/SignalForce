@@ -94,3 +94,37 @@ def test_customer_paper_trades_reject_overspending_and_cross_tenant_access():
     with pytest.raises(CustomerDataError):
         place_paper_trade(conn, "b", paper["id"], asset_id="mint-a", side="buy",
                           amount_usd=10, price_usd=1)
+
+
+def test_customer_automated_paper_traders_are_independent_and_pause_at_profit_target():
+    from app.customer_data import (
+        get_customer_paper_trader, pause_customer_paper_trader,
+        start_customer_paper_trader,
+    )
+    from app.customer_paper_bot import process_customer_accounts
+
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_account(conn, "a", "a@example.test")
+    _active_account(conn, "b", "b@example.test")
+    trader_a = start_customer_paper_trader(conn, "a", 1000, 100, "gradual")
+    assert trader_a["is_running"] is True
+    assert trader_a["strategy_mode"] == "gradual"
+    assert trader_a["profit_target_usd"] == 100
+    assert get_customer_paper_trader(conn, "b") is None
+
+    # Only tenant A is advanced to its target; tenant B remains untouched.
+    conn.execute(
+        "UPDATE customer_paper_accounts SET cash_balance_usd=1100 WHERE id=?",
+        (trader_a["id"],),
+    )
+    conn.commit()
+    result = process_customer_accounts(conn, {}, {})
+    assert result["targets_reached"] == 1
+    reached = get_customer_paper_trader(conn, "a")
+    assert reached["auto_status"] == "target_reached"
+    assert reached["is_running"] is False
+    assert get_customer_paper_trader(conn, "b") is None
+
+    paused = pause_customer_paper_trader(conn, "a")
+    assert paused["auto_status"] == "target_reached"
