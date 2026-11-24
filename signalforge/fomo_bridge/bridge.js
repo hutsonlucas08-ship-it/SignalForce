@@ -171,10 +171,10 @@ class ReadOnlyFomoBrowser {
           ...pick(row, [
             "rank", "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct",
             "winRate", "totalTrades", "numTrades", "swapCount", "totalVolume",
-            "volumeUsd", "followers", "verified", "userId", "userHandle", "displayName", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
+            "volumeUsd", "followers", "verified", "userId", "user_id", "userHandle", "handle", "username", "displayName", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
           ]),
           user: pick(user, [
-            "id", "userId", "userHandle", "displayName", "followers",
+            "id", "userId", "user_id", "userHandle", "handle", "username", "displayName", "followers",
             "following", "numTrades", "swapCount", "totalVolume", "verified"
           ]),
           stats: pick(stats, [
@@ -352,7 +352,7 @@ function cleanSwaps(rows, hasNextPage) {
     "humanUsdAmountOut", "inAmount", "inHumanAmount", "inNetworkId",
     "inTokenAddress", "inTradeId", "isCrossmint", "isOffPlatform", "networkId",
     "outAmount", "outHumanAmount", "outNetworkId", "outTokenAddress",
-    "outTradeId", "provider", "signature", "txHash", "transactionHash", "transactionSignature", "txSignature"
+    "outTradeId", "provider", "signature", "txHash", "transactionHash", "transactionSignature", "txSignature", "transaction_signature", "tx_signature", "solanaSignature"
   ];
   return {
     swaps: rows.slice(0, 100).map(row => {
