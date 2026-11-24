@@ -72,6 +72,8 @@ class ReadOnlyFomoBrowser {
     this.userId = null;
     this.sessionBlocked = false;
     this.authWaiters = [];
+    this.traderSwapCache = new Map();
+    this.traderSwapCursor = 0;
   }
 
   async connect() {
