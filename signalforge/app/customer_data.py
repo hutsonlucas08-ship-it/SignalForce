@@ -138,6 +138,7 @@ def place_paper_trade(
     conn: sqlite3.Connection, account_id: str, paper_account_id: str, *,
     asset_id: str, side: str, amount_usd: float, price_usd: float,
     token_name: str | None = None, reason: str = "manual paper trade",
+    automated: bool = False,
 ) -> dict:
     if not isinstance(asset_id, str) or not asset_id.strip() or len(asset_id) > 128:
         raise CustomerDataError("A valid token mint is required.")
@@ -160,6 +161,10 @@ def place_paper_trade(
     ).fetchone()
     if account is None:
         raise CustomerDataError("Paper account not found.")
+    if account["auto_session_id"] is not None and not automated:
+        raise CustomerDataError("This account is managed by its automated paper trader.")
+    if automated and account["auto_session_id"] is None:
+        raise CustomerDataError("Automated paper session is not active.")
     now = utcnow()
     position = conn.execute(
         "SELECT id,quantity,average_entry_price FROM customer_paper_positions WHERE paper_account_id=? AND asset_id=?",
