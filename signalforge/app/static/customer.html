@@ -103,21 +103,22 @@ td{color:#dce7ed}
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
   <div class="actions" style="margin-bottom:12px">
-   <button class="btn primary" id="refreshFomo" type="button">Refresh FOMO data</button>
+   <button class="btn primary" id="generateFomoPairing" type="button">Generate pairing code</button><button class="btn" id="refreshFomo" type="button">Refresh FOMO data</button>
    <button class="btn" id="disconnectFomo" type="button">Clear imported data</button>
   </div>
-  <div id="fomoConnectionStatus" class="message">Checking FOMO Copilot connection…</div>
+  <div id="fomoConnectionStatus" class="message">Checking FOMO Copilot connection…</div><div id="fomoPairingCode" class="card hidden" style="margin-bottom:12px"><strong>One-time pairing code · expires in 5 minutes</strong><p class="mono" id="fomoPairingCodeValue" style="font-size:18px;letter-spacing:1px"></p><p class="small">Paste this into the local bridge when Terminal prompts you. Do not send it to anyone.</p></div>
   <div class="grid" style="margin-top:12px">
    <div class="card">
     <div class="eyebrow">LOCAL BROWSER BRIDGE</div><h3 style="font-size:14px;margin:6px 0">Connect your FOMO session privately</h3>
     <ol class="small" style="padding-left:18px">
-     <li>Use Chrome with the same profile signed in to FOMO and SignalForce.</li>
-     <li>Open <a href="https://github.com/hutsonlucas08-ship-it/SignalForce/tree/feature/fomo-copilot/signalforge/fomo_bridge" target="_blank" rel="noopener noreferrer">the FOMO bridge folder on GitHub</a> and download the repository branch.</li>
-     <li>In Chrome, open <span class="mono">chrome://extensions</span>, turn on Developer mode, and choose Load unpacked.</li>
-     <li>Select the downloaded <span class="mono">signalforge/fomo_bridge</span> folder.</li>
-     <li>Refresh FOMO while signed in, then keep this SignalForce tab open. The bridge will send sanitized read-only snapshots.</li>
+     <li>Use the dedicated Chrome profile for FOMO with remote debugging on <span class="mono">127.0.0.1:9334</span>. Keep it local-only; do not expose the port.</li>
+     <li>Sign in to FOMO yourself in that Chrome window. No Chrome extension is used.</li>
+     <li>Confirm Node.js 22 or newer is installed with <span class="mono">node --version</span>.</li>
+     <li>Download the <a href="https://github.com/hutsonlucas08-ship-it/SignalForce/tree/feature/fomo-copilot/signalforge/fomo_bridge" target="_blank" rel="noopener noreferrer">local bridge folder</a> from this branch, then run <span class="mono">node bridge.js</span> from that folder.</li>
+     <li>Click <strong>Generate pairing code</strong> here and paste it into Terminal when the bridge asks. The input is hidden.</li>
+     <li>Leave Terminal running. The bridge polls once per minute and sends sanitized read-only snapshots.</li>
     </ol>
-    <p class="small">Your FOMO authorization header stays in the local extension's memory. It is never sent to SignalForce or stored. Never paste cookies, authorization headers, or session tokens into this page or chat.</p>
+    <p class="small">Your FOMO Authorization header stays in local process memory on your Mac. It is never sent to SignalForce or stored. Never paste cookies, authorization headers, or FOMO session tokens into this page or chat.</p>
    </div>
    <div class="card">
     <div class="eyebrow">WHAT IT READS</div><h3 style="font-size:14px;margin:6px 0">FOMO data sources</h3>
@@ -178,8 +179,8 @@ async function loadFomoCopilot(){
  try{
   const data=await request("/v1/customer/fomo-copilot");
   status.textContent=data.connected
-   ?"CONNECTED · "+data.snapshot_count+" FOMO data feeds received · Read-only / manual execution"
-   :"NOT CONNECTED · Install the local Chrome bridge below, then refresh FOMO while signed in.";
+   ?"CONNECTED · "+data.snapshot_count+" FOMO feeds received · "+(data.bridge_paired?"local bridge paired":"bridge key not paired")+" · Read-only / manual execution"
+   :(data.bridge_paired?"BRIDGE PAIRED · Waiting for the first FOMO snapshot.":"NOT CONNECTED · Start the local Node bridge below.");
   status.classList.toggle("error",false);
   const snapshots=data.snapshots||[];
   host.innerHTML=snapshots.length?snapshots.map(snapshot=>{
@@ -199,6 +200,16 @@ async function loadFomoCopilot(){
   }).join(""):'<div class="empty">No FOMO data imported yet. Install and activate the local browser bridge.</div>';
  }catch(error){status.textContent="FOMO Copilot unavailable: "+error.message;status.classList.add("error");}
 }
+$("generateFomoPairing").onclick=async()=>{
+ const button=$("generateFomoPairing");
+ button.disabled=true;
+ try{
+  const data=await request("/v1/customer/fomo-copilot/pairing",{method:"POST",body:"{}"});
+  $("fomoPairingCodeValue").textContent=data.pairing_code;
+  $("fomoPairingCode").classList.remove("hidden");
+ }catch(error){$("fomoConnectionStatus").textContent=error.message;$("fomoConnectionStatus").classList.add("error");}
+ finally{button.disabled=false;}
+};
 $("refreshFomo").onclick=loadFomoCopilot;
 $("disconnectFomo").onclick=async()=>{
  try{await request("/v1/customer/fomo-copilot",{method:"DELETE",body:"{}"});await loadFomoCopilot();}
