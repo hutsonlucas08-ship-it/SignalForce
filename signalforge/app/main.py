@@ -599,6 +599,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 ),
                 "5m buys/sells: %s/%s" % (item["buys_5m"], item["sells_5m"]),
                 item["market_url"],
+                "FOMO app: " + item["fomo_phone_url"],
+                "FOMO web: " + item["fomo_web_url"],
                 "Token: " + item["asset_id"],
             ])
         lines.append("\nNo entry/stop/target is supplied. Verify token safety and slippage yourself.")
