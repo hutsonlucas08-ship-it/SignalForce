@@ -121,8 +121,6 @@ def test_customer_trading_data_cascades_when_account_is_deleted():
 
 def test_repair_migration_recovers_database_with_020_already_recorded(tmp_path):
     import hashlib
-    from pathlib import Path
-
     from app.db import run_migrations
 
     conn = connect(":memory:")
@@ -131,15 +129,15 @@ def test_repair_migration_recovers_database_with_020_already_recorded(tmp_path):
     )
     conn.execute("CREATE TABLE customer_paper_trades (id TEXT PRIMARY KEY)")
     original_020 = (
-        "-- Track the start of each automated paper session so its dashboard history is session-specific.\\n"
-        "ALTER TABLE customer_paper_accounts ADD COLUMN auto_started_at TEXT;\\n"
+        "-- Track the start of each automated paper session so its dashboard history is session-specific.\n"
+        "ALTER TABLE customer_paper_accounts ADD COLUMN auto_started_at TEXT;\n"
     )
     migration_dir = tmp_path / "migrations"
     migration_dir.mkdir()
     (migration_dir / "020_customer_paper_session_history.sql").write_text(original_020)
     (migration_dir / "021_repair_customer_paper_session_columns.sql").write_text(
-        "ALTER TABLE customer_paper_accounts ADD COLUMN IF NOT EXISTS auto_session_id TEXT;\\n"
-        "ALTER TABLE customer_paper_trades ADD COLUMN IF NOT EXISTS paper_session_id TEXT;\\n"
+        "ALTER TABLE customer_paper_accounts ADD COLUMN IF NOT EXISTS auto_session_id TEXT;\n"
+        "ALTER TABLE customer_paper_trades ADD COLUMN IF NOT EXISTS paper_session_id TEXT;\n"
     )
     conn.execute(
         "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)"
