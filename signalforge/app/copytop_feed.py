@@ -134,6 +134,33 @@ async def fetch_feed() -> dict:
     # The live-trade request is scoped to the FOMO leaderboard handles. If the
     # provider labels platform, exclude rows explicitly marked as another platform.
     trades = [x for x in trades if str(x["platform"]).lower() in {"fomo", "fomo watchlist", "unknown", "none"}]
+    # Confluence and large-trade events are the strongest direct provider callouts.
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        alert_payload, alert_error = await _get(
+            client, "/alerts",
+            {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 20},
+        )
+    alerts = []
+    for row in _rows(alert_payload, "alerts", "events", "items", "results"):
+        trader_rows = row.get("traders") if isinstance(row.get("traders"), list) else []
+        handles_in_alert = []
+        for trader in trader_rows[:20]:
+            handle = trader if isinstance(trader, str) else (_handle(trader) if isinstance(trader, dict) else None)
+            if handle and handle not in handles_in_alert:
+                handles_in_alert.append(handle)
+        coin = row.get("coin") if isinstance(row.get("coin"), dict) else {}
+        alerts.append({
+            "kind": _first(row, "kind", "type", "event"),
+            "symbol": _first(row, "symbol", "ticker", default=_first(coin, "symbol", "ticker", default="?")),
+            "name": _first(row, "name", "tokenName", default=coin.get("name")),
+            "mint": _first(row, "address", "mint", "tokenAddress", default=_first(coin, "address", "mint")),
+            "chain": _first(row, "chain", "chainId", default=coin.get("chain")),
+            "trader_count": _first(row, "traderCount", "topTraderCount", "traders_count", default=len(handles_in_alert)),
+            "traders": handles_in_alert,
+            "amount_usd": _first(row, "amountUsd", "amount_usd", "usd", "valueUsd"),
+            "timestamp": _first(row, "timestamp", "createdAt", "created_at", "time"),
+            "summary": _first(row, "summary", "message", "description"),
+        })
     return {
         "provider": "copy.top",
         "provider_url": "https://copy.top/fomo-api",
@@ -143,7 +170,8 @@ async def fetch_feed() -> dict:
         "leaderboard": leaderboard,
         "live_trades": trades,
         "hot_coins": [_normalize_hot(x) for x in _rows(hot_payload, "coins", "items", "results", "hot")],
+        "alerts": alerts,
         "watchlist_handles": handles,
-        "errors": {"leaderboard": lb_error, "live_trades": trade_error, "hot_coins": hot_error},
+        "errors": {"leaderboard": lb_error, "live_trades": trade_error, "hot_coins": hot_error, "alerts": alert_error},
         "note": "Copy.top is independent of FOMO. Live trades are requested for handles on its FOMO leaderboard. Hot-coin data may aggregate platforms unless explicitly labeled. Provider data is not independent on-chain verification.",
     }
