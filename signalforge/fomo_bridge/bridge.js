@@ -164,12 +164,12 @@ class ReadOnlyFomoBrowser {
       if (!rows?.length) return;
       const traders = rows.slice(0, 50).map(row => {
         const user = row?.user || row?.profile || row?.trader || {};
-        const stats = row?.stats || row?.performance || {};
+        const stats = row?.stats || row?.performance || row?.metrics || {};
         const clean = {
           ...pick(row, [
             "rank", "pnl", "pnlUsd", "profit", "profitUsd", "roi", "roiPct",
             "winRate", "totalTrades", "numTrades", "swapCount", "totalVolume",
-            "volumeUsd", "followers", "verified", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
+            "volumeUsd", "followers", "verified", "userId", "userHandle", "displayName", "medianHoldMinutes", "medianHoldSeconds", "maxSingleTokenPnlShare", "topTokenPnlShare", "singleTokenPnlShare"
           ]),
           user: pick(user, [
             "id", "userId", "userHandle", "displayName", "followers",
