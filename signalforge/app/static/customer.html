@@ -114,7 +114,7 @@ async function loadPaperTrader(){
  $("traderProfit").textContent=(a.profit_usd>=0?"+":"")+usd(a.profit_usd);
  $("traderCash").textContent=usd(a.cash_balance_usd);
  $("traderStatus").textContent=a.auto_status==="target_reached"?"Profit target reached. Your trader has automatically paused.":a.is_running?"Your paper trader is running.":"Your paper trader is paused.";
- $("traderSettings").textContent=a.strategy_mode.charAt(0).toUpperCase()+a.strategy_mode.slice(1)+" mode · Started with "+usd(a.starting_capital_usd)+" · Goal: "+usd(a.profit_target_usd)+" profit";
+ $("traderSettings").textContent=a.strategy_mode.split("_").map(x=>x.charAt(0).toUpperCase()+x.slice(1)).join(" ")+" mode · Started with "+usd(a.starting_capital_usd)+" · Goal: "+usd(a.profit_target_usd)+" profit";
  $("targetLabel").textContent=usd(Math.max(0,a.profit_usd))+" of "+usd(a.profit_target_usd)+" profit target";
  $("targetProgress").style.width=Math.min(100,Math.max(0,a.target_progress_pct))+"%";
  $("pauseTrader").textContent=a.is_running?"Pause trader":a.auto_status==="target_reached"?"Start a new paper session":"Resume / update settings";
