@@ -147,12 +147,20 @@ class ReadOnlyFomoBrowser {
         : String(response.body || "");
       if (!raw || raw.length > 500_000) return;
       const payload = JSON.parse(raw);
-      const body = payload?.responseObject || payload;
-      const candidates = [
-        body?.leaderboard, body?.topTraders, body?.traders,
-        body?.users, body?.items, payload?.leaderboard
-      ];
-      const rows = candidates.find(Array.isArray);
+      const findRows = (node, depth = 0) => {
+        if (!node || typeof node !== "object" || depth > 5) return null;
+        for (const [key, value] of Object.entries(node)) {
+          if (Array.isArray(value) && /leaderboard|top.?traders|traders|users|items/i.test(key)) return value;
+        }
+        for (const value of Object.values(node)) {
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            const nested = findRows(value, depth + 1);
+            if (nested) return nested;
+          }
+        }
+        return null;
+      };
+      const rows = findRows(payload);
       if (!rows?.length) return;
       const traders = rows.slice(0, 50).map(row => {
         const user = row?.user || row?.profile || row?.trader || {};
