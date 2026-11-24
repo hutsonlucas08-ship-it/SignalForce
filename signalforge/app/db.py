@@ -177,7 +177,7 @@ def connect(db_path: str, database_url: str | None = None):
 def _sqlite_migration_sql(conn, source_sql: str) -> str:
     """Apply portable ADD COLUMN IF NOT EXISTS statements on SQLite."""
     pattern = re.compile(
-        r"ALTER\\s+TABLE\\s+(\\w+)\\s+ADD\\s+COLUMN\\s+IF\\s+NOT\\s+EXISTS\\s+(\\w+)\\s+([^;]+);",
+        r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(\w+)\s+([^;]+);",
         re.IGNORECASE,
     )
 
