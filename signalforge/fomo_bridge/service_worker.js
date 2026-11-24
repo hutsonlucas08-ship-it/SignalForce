@@ -63,11 +63,11 @@ function cleanSwaps(body) {
   const rows = body?.responseObject?.swaps;
   if (!Array.isArray(rows)) return { swaps: [], note: "FOMO did not return a swaps array." };
   const fields = [
-    "id", "address", "createdAt", "display", "displayPriceUsd",
+    "id", "createdAt", "display", "displayPriceUsd",
     "humanUsdAmountIn", "humanUsdAmountOut", "inAmount", "inHumanAmount",
     "inNetworkId", "inTokenAddress", "inTradeId", "isCrossmint",
     "isOffPlatform", "networkId", "outAmount", "outHumanAmount",
-    "outNetworkId", "outTokenAddress", "outTradeId", "provider", "recipient"
+    "outNetworkId", "outTokenAddress", "outTradeId", "provider"
   ];
   return {
     swaps: rows.slice(0, 50).map(row => pick(row, fields)),
@@ -107,15 +107,29 @@ async function pollFomo() {
   pollBusy = true;
   try {
     const jobs = [
-      ["spot_swaps", "/v2/users/" + encodeURIComponent(userId) + "/swaps?swapType=spot", cleanSwaps],
-      ["clans_24h", "/v2/clans/leaderboard?window=24h&limit=50", cleanClans],
-      ["clans_7d", "/v2/clans/leaderboard?window=7d&limit=50", cleanClans],
-      ["clans_30d", "/v2/clans/leaderboard?window=30d&limit=50", cleanClans]
+      ["spot_swaps", async () => {
+        let cursor = null;
+        const swaps = [];
+        let hasNextPage = true;
+        for (let page = 0; page < 4 && hasNextPage; page += 1) {
+          const query = new URLSearchParams({ swapType: "spot" });
+          if (cursor) query.set("lastSwapIdV2", cursor);
+          const data = await getJson("/v2/users/" + encodeURIComponent(userId) + "/swaps?" + query.toString());
+          const response = data?.responseObject || {};
+          if (Array.isArray(response.swaps)) swaps.push(...response.swaps);
+          hasNextPage = Boolean(response.hasNextPage);
+          cursor = response.swaps?.length ? response.swaps[response.swaps.length - 1].id : null;
+          if (!cursor) break;
+        }
+        return { swaps: swaps.slice(0, 100), has_next_page: hasNextPage, count: Math.min(swaps.length, 100) };
+      }],
+      ["clans_24h", async () => cleanClans(await getJson("/v2/clans/leaderboard?window=24h&limit=50"))],
+      ["clans_7d", async () => cleanClans(await getJson("/v2/clans/leaderboard?window=7d&limit=50"))],
+      ["clans_30d", async () => cleanClans(await getJson("/v2/clans/leaderboard?window=30d&limit=50"))]
     ];
-    for (const [type, path, clean] of jobs) {
+    for (const [type, load] of jobs) {
       try {
-        const data = await getJson(path);
-        await pushSnapshot(type, clean(data));
+        await pushSnapshot(type, await load());
       } catch (_) {
         // One unavailable FOMO endpoint must not block the other read-only feeds.
       }
