@@ -18,6 +18,7 @@ RISK_MONITOR_INTERVAL_SECONDS = 5.0
 STRATEGY_SCAN_INTERVAL_SECONDS = 30.0
 MARKET_ONLY_MIN_SCORE = 50.0
 BUNDLE_SELL_WINDOW_SECONDS = 60
+WORKER_LEASE_SECONDS = 45
 BUNDLE_SELL_MIN_WALLETS = 3
 BUNDLE_SELL_MIN_USD = 250.0
 LIQUIDITY_RUG_DROP_PCT = 35.0
@@ -344,7 +345,7 @@ def _claim_worker_lease(conn, worker_id):
         row = conn.execute(
             "UPDATE customer_paper_bot_state SET lock_owner=?,lock_until_epoch=? "
             "WHERE id=1 AND lock_until_epoch<? RETURNING id",
-            (worker_id, now + 180, now),
+            (worker_id, now + WORKER_LEASE_SECONDS, now),
         ).fetchone()
         conn.commit()
         return row is not None
