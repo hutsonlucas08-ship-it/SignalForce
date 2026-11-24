@@ -5,8 +5,52 @@
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% -10%,#17331d 0,transparent 38%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif}
 a{color:#9af5ad;text-decoration:none}.wrap{max-width:1160px;margin:auto;padding:26px 22px 60px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:26px}.brand{display:flex;align-items:center;gap:11px}.mark{width:38px;height:38px;border-radius:11px;background:linear-gradient(145deg,#39ff75,#168d3a);display:grid;place-items:center;color:#041006;font-weight:950;font-size:19px}.brand strong{font-size:17px;letter-spacing:.4px}.brand small{display:block;color:var(--muted);font-size:10px;letter-spacing:1.5px;text-transform:uppercase}.tag{border:1px solid #2c5135;color:#9af5ad;border-radius:99px;padding:5px 10px;font-size:10px;letter-spacing:1px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}.card{background:linear-gradient(145deg,#101811,#0a100c);border:1px solid var(--line);border-radius:13px;padding:19px;min-width:0}.card.wide{grid-column:1/-1}.head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:15px}.eyebrow{font-size:10px;letter-spacing:1.5px;color:#86a28b;font-weight:800}.head h2{font-size:15px;margin:4px 0}.head p,.muted{color:var(--muted);font-size:12px;margin:0}.field{margin:12px 0}.field label{display:block;color:#aab8ab;font-size:11px;margin-bottom:6px}.field input,.field select{width:100%;border:1px solid #304234;background:#050805;border-radius:7px;padding:11px;color:var(--text);outline:none}.field input:focus,.field select:focus{border-color:var(--green)}.row{display:flex;gap:10px;align-items:end}.row>*{flex:1;min-width:0}.btn{border:1px solid #36513b;background:#142019;color:var(--text);border-radius:7px;padding:10px 13px;font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#031006}.btn.danger{border-color:#633b3b;color:#ffaaaa}.btn:disabled{opacity:.5;cursor:wait}.actions{display:flex;gap:8px;flex-wrap:wrap}.message{padding:11px 13px;border:1px solid #34523a;background:#102116;border-radius:8px;color:#b6f7c2;margin:12px 0;font-size:12px}.message.error{border-color:#633b3b;background:#261313;color:#ffaaaa}.hidden{display:none!important}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;padding:10px;border-bottom:1px solid #203025;font-size:12px}th{font-size:10px;color:#829284;letter-spacing:1px;text-transform:uppercase}.status{font-size:10px;color:#a8efb5}.empty{padding:18px;color:#819083;text-align:center;font-size:12px}.auth{max-width:460px;margin:7vh auto}.tabs{display:flex;gap:8px;margin-bottom:15px}.tabs button{flex:1}.small{font-size:10px;color:#819083;line-height:1.6}.mono{font-family:ui-monospace,monospace;overflow-wrap:anywhere} .pill{font-size:10px;border:1px solid #35483a;border-radius:99px;padding:4px 8px;color:#b5c4b5}.launch-section{margin:0 0 22px}.launch-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.launch-card{display:flex;gap:12px;min-width:0;padding:11px;border:1px solid #243329;border-radius:10px;background:#0a100c}.launch-card img{width:54px;height:54px;object-fit:cover;border-radius:8px;background:#17231a}.launch-card strong{display:block;font-size:13px}.launch-card small{display:block;color:#91a092;font-size:10px}.launch-card .launch-meta{margin-top:4px;color:#b9c9ba}.launch-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.launch-heading h2{font-size:16px;margin:3px 0}.launch-heading p{margin:0;color:#91a092;font-size:11px}@media(max-width:760px){.launch-grid{grid-template-columns:1fr}}
 @media(max-width:760px){.wrap{padding:16px 12px 40px}.grid{grid-template-columns:1fr}.card.wide{grid-column:auto}.top{align-items:flex-start}.row{flex-direction:column;align-items:stretch}}
+
+/* SignalForce customer desk refresh — preserves all existing IDs and workflows. */
+:root{color-scheme:dark;--bg:#080d12;--panel:#101820;--line:#263541;--text:#edf3f6;--muted:#91a0ad;--green:#65d6a4;--red:#f07882;--amber:#e9bd70}
+body{background:radial-gradient(ellipse at 78% -12%,#173047 0,transparent 42%),var(--bg);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+.wrap{max-width:1440px;padding:30px 28px 64px}
+.top{border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:30px}
+.mark{background:linear-gradient(145deg,#65d6a4,#268b72);box-shadow:0 0 28px #65d6a422}
+.brand strong{letter-spacing:.8px;font-size:16px}.brand small{letter-spacing:1.7px}
+.tag,.pill{border-radius:7px;letter-spacing:.7px}
+.tag{border-color:#285443;background:#102b24;color:#80e6bc}
+.pill{border-color:#2c4658;background:#111e2a;color:#a9c7dc}
+.card{background:linear-gradient(145deg,#111c26,#0b1219);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 34px #0002}
+.launch-section{padding:22px;margin-bottom:20px}
+.launch-heading h2{font-size:18px;letter-spacing:-.3px}
+.launch-card{background:#0b141d;border-color:#263847;border-radius:11px;padding:13px}
+.launch-card img{border-radius:9px}
+.eyebrow{color:#82a5bf;letter-spacing:1.7px}
+.auth{max-width:500px;margin:7vh auto;padding:28px}
+.auth h1{font-size:27px!important;letter-spacing:-.8px}
+.muted,.head p{color:var(--muted)}
+.field label{color:#b1c0cb}
+.field input,.field select,.modal input{background:#080f15;border:1px solid #304353;border-radius:9px;padding:12px;color:var(--text)}
+.field input:focus,.field select:focus{border-color:var(--green);box-shadow:0 0 0 3px #65d6a415}
+.btn{border:1px solid #304556;background:#152330;color:#eaf2f6;border-radius:8px;padding:10px 14px;transition:background .15s,border-color .15s}
+.btn:hover{border-color:#65d6a4;background:#172c2c}
+.btn.primary{background:#65d6a4;border-color:#65d6a4;color:#06130f}
+.btn.danger{border-color:#70444b;color:#ffabb2}
+.message{border-color:#285543;background:#102b24;color:#a5f0cf;border-radius:9px}
+.message.error{border-color:#70444b;background:#2a171b;color:#ffb3ba}
+.grid{gap:16px}
+#workspace>.head{padding:2px 2px 14px}
+#workspace>.head h1{font-size:25px!important;letter-spacing:-.6px}
+#workspace .card.wide{padding:23px}
+#workspace .card .card{background:#0b141d;border-color:#263847;box-shadow:none}
+#traderEquity,#traderProfit,#traderCash{font-size:25px;letter-spacing:-.5px}
+.status{color:#a5f0cf}
+table{border-collapse:separate;border-spacing:0}
+th{color:#8fa6b7;font-size:10px;letter-spacing:1.1px}
+th,td{border-bottom:1px solid #21313e;padding:11px 10px}
+td{color:#dce7ed}
+.empty{color:#8396a5}
+.small{color:#8799a8}
+@media(max-width:760px){.wrap{padding:16px 12px 40px}.auth{padding:22px}.launch-section{padding:15px}#workspace .card.wide{padding:16px}}
+
 </style></head><body><div class="wrap">
-<header class="top"><div class="brand"><div class="mark">S</div><div><strong>SIGNALFORCE</strong><small>Customer workspace</small></div></div><div class="actions"><a class="pill" href="/terminal">← Main terminal</a><span class="tag">PAPER ONLY · NO WALLET SIGNING</span></div></header>
+<header class="top"><div class="brand"><div class="mark">S</div><div><strong>SIGNALFORCE</strong><small>Customer workspace</small></div></div><div class="actions"><span class="pill">CUSTOMER PAPER DESK</span><span class="tag">PAPER ONLY · NO WALLET SIGNING</span></div></header>
 <section class="card launch-section"><div class="launch-heading"><div><div class="eyebrow">LIVE SOLANA DISCOVERY</div><h2>Fresh launches</h2><p>Newest pools first · GeckoTerminal public feed</p></div><button class="btn" id="refreshLaunches">Refresh</button></div><div id="launchFeed" class="launch-grid"><div class="empty">Loading newest Solana launches…</div></div><p class="small" id="launchNote">New pool creation is a discovery signal, not proof of legitimacy or safety. Always review liquidity, holders, authorities and trading activity.</p></section>
 <div id="authView" class="auth card">
  <div class="eyebrow">PRIVATE CUSTOMER ACCESS</div><h1 style="font-size:24px;margin:5px 0 4px">Your automated paper trader.</h1><p class="muted">Sign in to set up your own automated paper trader. No wallet connection or API key is required.</p>
