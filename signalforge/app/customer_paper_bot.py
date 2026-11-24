@@ -83,7 +83,7 @@ def monitor_customer_positions(conn, pairs):
                "take_profit_exits": 0, "partial_exits": 0,
                "bundle_sell_flags": 0, "stale_positions": 0}
     rows = conn.execute(
-        """SELECT p.*, a.account_id, a.strategy_mode
+        """SELECT p.*, a.account_id, COALESCE(a.strategy_profile,a.strategy_mode) AS strategy_mode
            FROM customer_paper_positions p
            JOIN customer_paper_accounts a ON a.id=p.paper_account_id
            WHERE a.enabled=1 AND a.auto_status='running'
@@ -190,7 +190,8 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
 
     for raw in accounts:
         account = dict(raw)
-        rules = MODE_RULES.get(account["strategy_mode"], MODE_RULES["normal"])
+        strategy_mode = account.get("strategy_profile") or account["strategy_mode"]
+        rules = MODE_RULES.get(strategy_mode, MODE_RULES["normal"])
         positions = conn.execute(
             "SELECT * FROM customer_paper_positions WHERE paper_account_id=?", (account["id"],)
         ).fetchall()
@@ -288,7 +289,7 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                         token_name=token_name, side="buy", amount_usd=amount, price_usd=price,
                         reason="Automated %s entry · score %.1f · %s · %s mode" % (
                             source, score, wallet_count and (str(wallet_count) + " tracked wallet(s)") or "no wallet signal",
-                            account["strategy_mode"].title(),
+                            strategy_mode.replace("_", " ").title(),
                         ),
                         automated=True,
                     )
