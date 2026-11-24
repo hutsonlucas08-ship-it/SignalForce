@@ -702,6 +702,39 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         conn.commit()
         return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
 
+    @app.get("/v1/customer/fomo-copilot/bridge-targets")
+    def customer_fomo_copilot_bridge_targets(
+        request: Request,
+        conn=Depends(get_conn),
+    ):
+        """Return only strictly qualified trader IDs to the paired read-only bridge."""
+        bridge_key = request.headers.get("X-Fomo-Bridge-Key", "")
+        if not bridge_key:
+            raise HTTPException(status_code=401, detail="Local bridge key required")
+        supplied_hash = hashlib.sha256(bridge_key.encode()).hexdigest()
+        row = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE bridge_hash=? AND bridge_expires_at>?",
+            (supplied_hash, utcnow()),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Local bridge key is invalid or expired")
+        snapshots = fomo_copilot.list_snapshots(conn, row["account_id"])
+        qualified = whale_selection.qualify_traders(snapshots)["qualified_traders"]
+        return {
+            "qualified_traders": [
+                {
+                    "user_id": trader["user_id"],
+                    "handle": trader["handle"],
+                    "rank_score": trader["rank_score"],
+                }
+                for trader in qualified[:25]
+            ],
+            "count": min(len(qualified), 25),
+            "mode": "read_only",
+            "note": "Only leaderboard-qualified FOMO user IDs are returned. No trade execution is available.",
+        }
+
     @app.post("/v1/customer/fomo-copilot/bridge-snapshot")
     def customer_fomo_copilot_bridge_snapshot(
         body: CustomerFomoSnapshotRequest,
