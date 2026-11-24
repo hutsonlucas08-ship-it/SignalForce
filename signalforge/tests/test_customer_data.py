@@ -136,3 +136,18 @@ assert paused["auto_status"] == "target_reached"
     assert restarted["cash_balance_usd"] == 500
     assert restarted["positions"] == []
 
+
+
+def test_first_automated_setup_resets_legacy_manual_simulation_state():
+    from app.customer_data import place_paper_trade, start_customer_paper_trader
+    conn = connect(":memory:")
+    run_migrations(conn)
+    _active_account(conn, "legacy", "legacy@example.test")
+    old = create_paper_account(conn, "legacy", 250)
+    place_paper_trade(conn, "legacy", old["id"], asset_id="old-mint",
+                      side="buy", amount_usd=50, price_usd=1)
+    trader = start_customer_paper_trader(conn, "legacy", 1000, 500, "normal")
+    assert trader["starting_capital_usd"] == 1000
+    assert trader["cash_balance_usd"] == 1000
+    assert trader["positions"] == []
+    assert trader["auto_status"] == "running"
