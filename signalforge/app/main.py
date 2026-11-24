@@ -503,7 +503,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     continue
                 mint = swap.get("outTokenAddress")
                 created_at = swap.get("createdAt")
-                if not isinstance(mint, str) or not mint or not isinstance(created_at, str):
+                if not isinstance(mint, str) or not (32 <= len(mint) <= 44) or not all(char in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for char in mint) or not isinstance(created_at, str):
+                    continue
+                if mint in {"So11111111111111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkGZwyTDt1v", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"}:
                     continue
                 try:
                     parsed_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
@@ -584,7 +586,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 oldest_key = min(_callout_market_cache, key=lambda key: _callout_market_cache[key][0])
                 _callout_market_cache.pop(oldest_key, None)
         result = fomo_signals.build_callouts(assets, pairs)
-        result["gecko_terminal_new_pools_seen"] = len(launch_rows)
+        result["gecko_terminal_new_pools_seen"] = 0 if launch_data.get("stale") else len(launch_rows)
         spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
         swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
         own_activity = {}
