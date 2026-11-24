@@ -29,6 +29,7 @@ def _sources(row):
         row,
         row.get("stats") if isinstance(row.get("stats"), dict) else {},
         row.get("performance") if isinstance(row.get("performance"), dict) else {},
+        row.get("metrics") if isinstance(row.get("metrics"), dict) else {},
         row.get("user") if isinstance(row.get("user"), dict) else {},
     ]
 
