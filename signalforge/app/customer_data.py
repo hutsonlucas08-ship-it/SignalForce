@@ -232,6 +232,7 @@ def get_customer_paper_trader(conn, account_id: str) -> dict | None:
     if row is None or row["auto_status"] == "setup":
         return None
     account = dict(row)
+    account["strategy_mode"] = account.get("strategy_profile") or account["strategy_mode"]
     positions = conn.execute(
         "SELECT asset_id,token_name,quantity,average_entry_price,last_price,opened_at FROM customer_paper_positions WHERE paper_account_id=? ORDER BY opened_at DESC",
         (account["id"],),
@@ -271,22 +272,23 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
     existing = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
     now = utcnow()
     session_id = secrets.token_urlsafe(18)
+    stored_mode = "aggressive" if mode == "ultra_aggressive" else mode
     if existing is None:
         paper_id = secrets.token_urlsafe(18)
         conn.execute(
             """INSERT INTO customer_paper_accounts
-               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,profit_target_usd,auto_status,auto_session_id,created_at,updated_at)
-               VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,'running',?,?,?)""",
-            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), session_id, now, now),
+               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,strategy_profile,profit_target_usd,auto_status,auto_session_id,created_at,updated_at)
+               VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,?,'running',?,?,?)""",
+            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), stored_mode, mode, float(profit_target_usd), session_id, now, now),
         )
     else:
         paper_id = existing["id"]
         if existing["auto_status"] in {"setup", "target_reached"}:
             conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
             conn.execute(
-                """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,
+                """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,strategy_profile=?,
                    profit_target_usd=?,enabled=1,auto_status='running',auto_session_id=?,updated_at=? WHERE id=? AND account_id=?""",
-                (float(starting_capital_usd), float(starting_capital_usd), mode, float(profit_target_usd), session_id, now, paper_id, account_id),
+                (float(starting_capital_usd), float(starting_capital_usd), stored_mode, mode, float(profit_target_usd), session_id, now, paper_id, account_id),
             )
         else:
             trade_count = conn.execute("SELECT COUNT(*) FROM customer_paper_trades WHERE paper_account_id=?", (paper_id,)).fetchone()[0]
@@ -295,9 +297,9 @@ def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: flo
                 conn.execute("UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=? WHERE id=? AND account_id=?",
                              (float(starting_capital_usd), float(starting_capital_usd), paper_id, account_id))
             conn.execute(
-                """UPDATE customer_paper_accounts SET strategy_mode=?,profit_target_usd=?,enabled=1,auto_status='running',updated_at=?
+                """UPDATE customer_paper_accounts SET strategy_mode=?,strategy_profile=?,profit_target_usd=?,enabled=1,auto_status='running',updated_at=?
                    WHERE id=? AND account_id=?""",
-                (mode, float(profit_target_usd), now, paper_id, account_id),
+                (stored_mode, mode, float(profit_target_usd), now, paper_id, account_id),
             )
     conn.commit()
     return get_customer_paper_trader(conn, account_id)
