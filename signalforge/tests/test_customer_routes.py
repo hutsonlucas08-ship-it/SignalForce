@@ -148,3 +148,33 @@ def test_public_homepage_serves_customer_launch_experience():
     assert "Fresh launches" in response.text
     assert "Customer workspace" in response.text
     assert "PAPER DESK" not in response.text
+
+
+def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
+    client_a, client_b = _client(), _client()
+    _register_and_activate(client_a, "bot-a@example.test", monkeypatch)
+    _register_and_activate(client_b, "bot-b@example.test", monkeypatch)
+    csrf_a, csrf_b = _login(client_a, "bot-a@example.test"), _login(client_b, "bot-b@example.test")
+
+    assert client_a.get("/v1/customer/paper-trader").json()["paper_trader"] is None
+    denied = client_a.post("/v1/customer/paper-trader/start", json={
+        "starting_capital_usd": 1000, "profit_target_usd": 500, "mode": "normal"
+    })
+    assert denied.status_code == 403
+
+    started = client_a.post("/v1/customer/paper-trader/start", headers={"X-CSRF-Token": csrf_a}, json={
+        "starting_capital_usd": 1000, "profit_target_usd": 500, "mode": "normal"
+    })
+    assert started.status_code == 200
+    trader = started.json()["paper_trader"]
+    assert trader["is_running"] is True
+    assert trader["starting_capital_usd"] == 1000
+    assert trader["profit_target_usd"] == 500
+    assert client_b.get("/v1/customer/paper-trader").json()["paper_trader"] is None
+
+    paused = client_a.post("/v1/customer/paper-trader/pause",
+                           headers={"X-CSRF-Token": csrf_a}, json={})
+    assert paused.status_code == 200
+    assert paused.json()["paper_trader"]["is_running"] is False
+    assert client_b.post("/v1/customer/paper-trader/pause",
+                         headers={"X-CSRF-Token": csrf_b}, json={}).json()["paper_trader"] is None
