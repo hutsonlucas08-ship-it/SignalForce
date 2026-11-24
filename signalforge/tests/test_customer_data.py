@@ -113,9 +113,16 @@ def test_customer_automated_paper_traders_are_independent_and_pause_at_profit_ta
     assert trader_a["profit_target_usd"] == 100
     assert get_customer_paper_trader(conn, "b") is None
 
+    # A paused account rejects worker orders until the customer resumes it.
+    from app.customer_data import place_paper_trade
+    pause_customer_paper_trader(conn, "a")
+    with pytest.raises(CustomerDataError):
+        place_paper_trade(conn, "a", trader_a["id"], asset_id="mint-a",
+                          side="buy", amount_usd=100, price_usd=1, automated=True)
+    trader_a = start_customer_paper_trader(conn, "a", 1000, 100, "gradual")
+
     # A real simulated position doubles in value, is closed by the mode's
     # take-profit rule, and reaches only tenant A's dollar profit target.
-    from app.customer_data import place_paper_trade
     place_paper_trade(conn, "a", trader_a["id"], asset_id="mint-a",
                       side="buy", amount_usd=100, price_usd=1, automated=True)
     pair = {"priceUsd": "2", "baseToken": {"name": "Token A"}}
