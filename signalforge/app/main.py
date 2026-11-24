@@ -93,6 +93,7 @@ class CustomerPaperTraderStartRequest(BaseModel):
     starting_capital_usd: float = Field(ge=5, le=100000000)
     profit_target_usd: float = Field(ge=1, le=100000000)
     mode: str = Field(pattern="^(gradual|normal|aggressive|ultra_aggressive)$")
+    new_session: bool = False
 
 
 class CustomerPaperTradeRequest(BaseModel):
@@ -307,7 +308,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         try:
             return {"paper_trader": customer_data.start_customer_paper_trader(
                 conn, session["account_id"], body.starting_capital_usd,
-                body.profit_target_usd, body.mode)}
+                body.profit_target_usd, body.mode, new_session=body.new_session)}
         except customer_data.CustomerDataError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
