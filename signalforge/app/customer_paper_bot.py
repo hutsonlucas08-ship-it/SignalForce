@@ -263,7 +263,7 @@ def monitor_customer_positions(conn, pairs):
             summary["stop_exits"] += 1
             continue
 
-        if not bool(pos.get("partial_profit_taken")) and change >= rules["partial_at"]:
+        if not bool(pos.get("partial_profit_taken")) and change + 1e-9 >= rules["partial_at"]:
             fraction = rules["partial_fraction"]
             _sell_fraction(conn, account, pos, price, fraction,
                            "%s: banked %.0f%% at +%.1f%%; trailing remainder" % (
@@ -341,6 +341,7 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None):
                 pos = dict(open_pos)
                 mark = float(pos["last_price"]) or float(pos["average_entry_price"])
                 _sell(conn, account, pos, mark, "Profit target reached · automatic paper close")
+                summary["sells"] += 1
             conn.execute(
                 "UPDATE customer_paper_accounts SET enabled=0,auto_status='target_reached',updated_at=? WHERE id=? AND account_id=?",
                 (utcnow(), account["id"], account["account_id"]),
