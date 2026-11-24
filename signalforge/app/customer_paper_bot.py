@@ -53,7 +53,7 @@ def process_customer_accounts(conn,pairs,wallet_signals):
    for mint,signal in wallet_signals.items():
     if int(signal.get("wallet_count") or 0)<1: continue
     if conn.execute("SELECT 1 FROM customer_paper_positions WHERE paper_account_id=? AND asset_id=?",(account["id"],mint)).fetchone(): continue
-    if conn.execute("SELECT 1 FROM customer_paper_trades WHERE paper_account_id=? AND asset_id=? AND side='buy' AND created_at>=? LIMIT 1",(account["id"],mint,cooldown_since)).fetchone(): continue
+    if conn.execute("SELECT 1 FROM customer_paper_trades WHERE paper_account_id=? AND asset_id=? AND side='buy' AND paper_session_id=? AND created_at>=? LIMIT 1",(account["id"],mint,account["auto_session_id"],cooldown_since)).fetchone(): continue
     pair=pairs.get(mint)
     if not pair: continue
     score,_=paper_bot._score(pair)
