@@ -305,7 +305,7 @@ function cleanSwaps(rows, hasNextPage) {
     "humanUsdAmountOut", "inAmount", "inHumanAmount", "inNetworkId",
     "inTokenAddress", "inTradeId", "isCrossmint", "isOffPlatform", "networkId",
     "outAmount", "outHumanAmount", "outNetworkId", "outTokenAddress",
-    "outTradeId", "provider"
+    "outTradeId", "provider", "signature", "txHash", "transactionHash"
   ];
   return {
     swaps: rows.slice(0, 100).map(row => {
