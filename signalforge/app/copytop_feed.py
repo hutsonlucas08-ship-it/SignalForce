@@ -36,7 +36,7 @@ def _first(row: dict, *keys: str, default=None):
 
 
 def _handle(row: dict) -> str | None:
-    value = _first(row, "handle", "username", "userHandle", "trader_handle")
+    value = _first(row, "handle", "username", "userHandle", "user_handle", "trader_handle", "traderHandle", "screenName")
     if value is None:
         for path in ("trader", "user", "profile"):
             nested = row.get(path)
@@ -68,6 +68,8 @@ def _normalize_trade(row: dict) -> dict:
     trader = row.get("trader") if isinstance(row.get("trader"), dict) else {}
     token = row.get("coin") if isinstance(row.get("coin"), dict) else row.get("token")
     token = token if isinstance(token, dict) else {}
+    trader = row.get("trader") if isinstance(row.get("trader"), dict) else row.get("user")
+    trader = trader if isinstance(trader, dict) else {}
     return {
         "id": _first(row, "id", "tradeId", "signature"),
         "handle": _handle(row) or _handle(trader) or "FOMO trader",
@@ -75,16 +77,16 @@ def _normalize_trade(row: dict) -> dict:
         "side": str(_first(row, "side", "action", default="unknown")).lower(),
         "symbol": _first(row, "symbol", "ticker", default=_first(token, "symbol", "ticker", default="?")),
         "token_name": _first(row, "tokenName", "name", default=_first(token, "name", "symbol")),
-        "mint": _first(row, "address", "tokenAddress", "mint", "coinAddress", default=_first(token, "address", "mint")),
+        "mint": _first(row, "address", "tokenAddress", "token_address", "mint", "mintAddress", "mint_address", "coinAddress", "coin_address", "contractAddress", "contract_address", default=_first(token, "address", "tokenAddress", "token_address", "mint", "mintAddress", "mint_address", "coinAddress", "coin_address", "contractAddress", "contract_address")),
         "amount_usd": _first(row, "amountUsd", "amount_usd", "usd", "valueUsd", "value_usd"),
         "price_usd": _first(row, "priceUsd", "price_usd", "price"),
-        "timestamp": _first(row, "timestamp", "createdAt", "created_at", "time"),
+        "timestamp": _first(row, "timestamp", "createdAt", "created_at", "time", "blockTime", "block_time", "timestampIso", "timestamp_iso"),
         "tx_signature": _first(row, "signature", "txSignature", "tx_signature"),
     }
 
 
 def _normalize_hot(row: dict) -> dict:
-    traders = _first(row, "traders", "buyers", "firstBuyers", "first_buyers", default=[])
+    traders = _first(row, "traders", "buyers", "firstBuyers", "first_buyers", "topTraders", "top_traders", "firstBuyerHandles", "first_buyer_handles", "traderHandles", "trader_handles", default=[])
     traders = traders if isinstance(traders, list) else []
     handles = []
     for trader in traders[:20]:
@@ -95,11 +97,11 @@ def _normalize_hot(row: dict) -> dict:
     return {
         "symbol": _first(row, "symbol", "ticker", default="?"),
         "name": _first(row, "name", "tokenName"),
-        "mint": _first(row, "address", "mint", "tokenAddress", "coinAddress"),
+        "mint": _first(row, "address", "mint", "tokenAddress", "token_address", "mintAddress", "mint_address", "coinAddress", "coin_address", "contractAddress", "contract_address"),
         "chain": _first(row, "chain", "chainId"),
         "platform": platform,
         "platform_scope": "fomo" if str(platform).lower() == "fomo" else "provider aggregate; platform scope not confirmed",
-        "trader_count": _first(row, "traderCount", "tradersCount", "uniqueTraders", "unique_traders", "buyersCount", "topTraderCount", "top_traders_count", default=len(handles)),
+        "trader_count": _first(row, "traderCount", "trader_count", "tradersCount", "traders_count", "uniqueTraders", "unique_traders", "buyersCount", "buyers_count", "topTraderCount", "top_trader_count", "top_traders_count", "numTraders", "num_traders", default=len(handles)),
         "traders": handles,
         "bought_usd": _first(row, "boughtUsd", "buyUsd", "buy_usd", "totalBoughtUsd", "total_bought_usd", "dollarsBought"),
         "sold_usd": _first(row, "soldUsd", "sellUsd", "sell_usd", "totalSoldUsd", "total_sold_usd", "dollarsSold"),
@@ -167,12 +169,12 @@ async def fetch_feed() -> dict:
             "kind": _first(row, "kind", "type", "event", "event_type"),
             "symbol": _first(row, "symbol", "ticker", default=_first(coin, "symbol", "ticker", default="?")),
             "name": _first(row, "name", "tokenName", default=coin.get("name")),
-            "mint": _first(row, "address", "mint", "tokenAddress", default=_first(coin, "address", "mint")),
+            "mint": _first(row, "address", "mint", "tokenAddress", "token_address", "mintAddress", "mint_address", "coinAddress", "coin_address", "contractAddress", "contract_address", default=_first(coin, "address", "mint", "tokenAddress", "token_address", "mintAddress", "mint_address", "coinAddress", "coin_address", "contractAddress", "contract_address")),
             "chain": _first(row, "chain", "chainId", default=coin.get("chain")),
-            "trader_count": _first(row, "traderCount", "topTraderCount", "traders_count", "top_traders_count", default=len(handles_in_alert)),
+            "trader_count": _first(row, "traderCount", "trader_count", "topTraderCount", "top_trader_count", "tradersCount", "traders_count", "top_traders_count", "numTraders", "num_traders", default=(len(handles_in_alert) if handles_in_alert else (row.get("traders") if isinstance(row.get("traders"), int) else None))),
             "traders": handles_in_alert,
             "amount_usd": _first(row, "amountUsd", "amount_usd", "usd", "valueUsd"),
-            "timestamp": _first(row, "timestamp", "createdAt", "created_at", "time"),
+            "timestamp": _first(row, "timestamp", "createdAt", "created_at", "time", "blockTime", "block_time", "timestampIso", "timestamp_iso"),
             "summary": _first(row, "summary", "message", "description"),
         })
     return {
