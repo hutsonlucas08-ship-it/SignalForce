@@ -297,7 +297,6 @@ def _recent_fomo_buy_signals(conn, lookback_minutes=10):
     FOMO activity is discovery context only. The normal independent market
     quality checks still decide whether any simulated entry is allowed.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
     rows = conn.execute(
         """SELECT s.account_id, s.payload_json
            FROM customer_fomo_snapshots s
@@ -347,6 +346,7 @@ def process_customer_accounts(conn, pairs, wallet_signals, asset_names=None, fom
     summary = {
         "customers": 0, "buys": 0, "sells": 0, "targets_reached": 0,
         "priced_candidates": len(pairs), "wallet_signal_count": len(wallet_signals),
+        "fomo_signal_count": sum(len(v) for v in (fomo_signals_by_account or {}).values()),
         "rejection_reasons": {},
     }
     names = asset_names or {}
@@ -621,7 +621,6 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                             + [item["asset_id"] for item in observed if item.get("asset_id")]
                             + [item["asset_id"] for item in launches if item.get("asset_id")]
                         ))[:180]
-                        pairs = await paper_bot._fetch_pairs(client, discovered) if discovered else {}
                         fomo_signals = _recent_fomo_buy_signals(conn)
                         fomo_mints = [mint for account_signals in fomo_signals.values() for mint in account_signals]
                         discovered = list(dict.fromkeys(discovered + fomo_mints))[:180]
