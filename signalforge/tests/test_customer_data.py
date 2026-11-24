@@ -113,13 +113,14 @@ def test_customer_automated_paper_traders_are_independent_and_pause_at_profit_ta
     assert trader_a["profit_target_usd"] == 100
     assert get_customer_paper_trader(conn, "b") is None
 
-    # Only tenant A is advanced to its target; tenant B remains untouched.
-    conn.execute(
-        "UPDATE customer_paper_accounts SET cash_balance_usd=1100 WHERE id=?",
-        (trader_a["id"],),
-    )
-    conn.commit()
-    result = process_customer_accounts(conn, {}, {})
+    # A real simulated position doubles in value, is closed by the mode's
+    # take-profit rule, and reaches only tenant A's dollar profit target.
+    from app.customer_data import place_paper_trade
+    place_paper_trade(conn, "a", trader_a["id"], asset_id="mint-a",
+                      side="buy", amount_usd=100, price_usd=1)
+    pair = {"priceUsd": "2", "baseToken": {"name": "Token A"}}
+    result = process_customer_accounts(conn, {"mint-a": pair}, {})
+    assert result["sells"] == 1
     assert result["targets_reached"] == 1
     reached = get_customer_paper_trader(conn, "a")
     assert reached["auto_status"] == "target_reached"
