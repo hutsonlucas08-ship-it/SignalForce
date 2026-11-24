@@ -141,18 +141,10 @@ def test_postgres_customer_registration_verification_and_session_lifecycle(postg
     conn = postgres_connection
     email = uuid.uuid4().hex + "@customer.test"
     account_id = register_customer_account(conn, email.upper(), "correct horse battery staple")
-    with pytest.raises(CustomerAuthError):
-        create_customer_session(conn, account_id)
+    account = conn.execute("SELECT status FROM customer_accounts WHERE id=?", (account_id,)).fetchone()
+    assert account["status"] == "active"
 
-    token = create_email_verification_token(conn, account_id)
-    stored = conn.execute(
-        "SELECT token_hash FROM customer_email_verification_tokens WHERE account_id=?",
-        (account_id,),
-    ).fetchone()
-    assert token not in stored["token_hash"]
-    assert consume_email_verification_token(conn, token) is True
-    assert consume_email_verification_token(conn, token) is False
-
+    # Registration is immediately usable; email delivery/verification is not required.
     created = create_customer_session(conn, account_id)
     session = authenticate_customer_session(conn, created["session_token"])
     assert session is not None
@@ -230,12 +222,6 @@ def test_postgres_customer_registration_and_signin_routes(monkeypatch):
         admin_api_keys=frozenset(),
         database_url=DATABASE_URL,
     )
-    sent = {}
-
-    async def fake_send(address, token):
-        sent[address] = token
-
-    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
     monkeypatch.setenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
     with TestClient(create_app(settings), base_url="https://testserver") as client:
         email = uuid.uuid4().hex + "@routes.test"
@@ -244,11 +230,8 @@ def test_postgres_customer_registration_and_signin_routes(monkeypatch):
             json={"email": email, "password": "correct horse battery staple"},
         )
         assert registered.status_code == 201
-        assert email in sent
-        verified = client.get(
-            "/v1/customer/verify-email", params={"token": sent[email]}
-        )
-        assert verified.status_code == 200
+        assert registered.json()["authenticated"] is True
+        assert client.get("/v1/customer/me").json()["email"] == email
         login = client.post(
             "/v1/customer/login",
             json={"email": email, "password": "correct horse battery staple"},
