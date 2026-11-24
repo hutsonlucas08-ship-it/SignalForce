@@ -1,5 +1,6 @@
 """Read-only Copy.top public FOMO intelligence adapter; never places orders."""
 from datetime import datetime, timezone
+import asyncio
 from typing import Any
 import httpx
 
@@ -127,7 +128,16 @@ async def fetch_feed() -> dict:
     """Fetch FOMO leaderboard, watchlist tape, confluence alerts and hot-coin context."""
     global _trade_cursor, _alert_cursor
     async with httpx.AsyncClient(timeout=8.0) as client:
-        lb_payload, lb_error = await _get(client, "/traders", {"platform": "fomo", "window": "7d", "sort": "realized", "limit": 20})
+        # These provider endpoints are independent. Fetch them concurrently so
+        # one slow endpoint does not serially delay the entire Copilot panel.
+        (lb_payload, lb_error), (hot_payload, hot_error), (alert_payload, alert_error) = await asyncio.gather(
+            _get(client, "/traders", {"platform": "fomo", "window": "7d", "sort": "realized", "limit": 20}),
+            _get(client, "/coins/hot", {"window": "1h", "limit": 15}),
+            _get(
+                client, "/alerts",
+                {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 20, **({"since": _alert_cursor} if _alert_cursor else {})},
+            ),
+        )
         lb_rows = _rows(lb_payload, "traders", "items", "results", "leaderboard")
         leaderboard = [_normalize_trader(row) for row in lb_rows]
         handles = list(dict.fromkeys(x["handle"] for x in leaderboard if x["handle"] != "Unknown trader"))[:20]
@@ -138,23 +148,18 @@ async def fetch_feed() -> dict:
             trade_payload, trade_error = await _get(client, "/trades", trade_params)
         else:
             trade_payload, trade_error = {}, "No FOMO leaderboard handles available."
-        hot_payload, hot_error = await _get(client, "/coins/hot", {"window": "1h", "limit": 15})
     trade_cursor = _first(trade_payload, "cursor", "nextCursor", "next_cursor") if isinstance(trade_payload, dict) else None
     if isinstance(trade_cursor, str) and trade_cursor:
         _trade_cursor = trade_cursor
+    alert_cursor = _first(alert_payload, "cursor", "nextCursor", "next_cursor") if isinstance(alert_payload, dict) else None
+    if isinstance(alert_cursor, str) and alert_cursor:
+        _alert_cursor = alert_cursor
     trades = [_normalize_trade(x) for x in _rows(trade_payload, "trades", "items", "results")]
     # The live-trade request is scoped to the FOMO leaderboard handles. If the
     # provider labels platform, exclude rows explicitly marked as another platform.
     trades = [x for x in trades if str(x["platform"]).lower() in {"fomo", "fomo watchlist", "unknown", "none"}]
-    # Confluence and large-trade events are the strongest direct provider callouts.
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        alert_payload, alert_error = await _get(
-            client, "/alerts",
-            {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 20, **({"since": _alert_cursor} if _alert_cursor else {})},
-        )
-    alert_cursor = _first(alert_payload, "cursor", "nextCursor", "next_cursor") if isinstance(alert_payload, dict) else None
-    if isinstance(alert_cursor, str) and alert_cursor:
-        _alert_cursor = alert_cursor
+    # Confluence and large-trade events were fetched alongside the leaderboard
+    # and hot-coin context above, so the slowest of those three sets the wait.
     alerts = []
     for row in _rows(alert_payload, "alerts", "events", "items", "results"):
         trader_rows = _first(row, "traders", "topTraders", "top_traders", default=[])
