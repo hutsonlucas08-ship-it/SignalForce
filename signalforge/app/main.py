@@ -503,9 +503,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     continue
                 mint = swap.get("outTokenAddress")
                 created_at = swap.get("createdAt")
-                if not isinstance(mint, str) or not (32 <= len(mint) <= 44) or not all(char in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for char in mint) or not isinstance(created_at, str):
-                    continue
-                if mint in {"So11111111111111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkGZwyTDt1v", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"}:
+                if not fomo_signals.is_solana_mint(mint) or not isinstance(created_at, str):
                     continue
                 try:
                     parsed_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
