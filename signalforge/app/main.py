@@ -1,5 +1,8 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
 import asyncio
+import hashlib
+import hmac
+import secrets
 import json
 import logging
 import os
@@ -118,6 +121,10 @@ class CustomerFomoSnapshotRequest(BaseModel):
     snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d)$")
     observed_at: Optional[str] = None
     payload: dict
+
+
+class CustomerFomoPairRequest(BaseModel):
+    pairing_code: str = Field(min_length=8, max_length=100)
 
 
 class RiskScreenRequest(BaseModel):
@@ -457,13 +464,59 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/v1/customer/fomo-copilot")
     def customer_fomo_copilot(session=Depends(require_customer), conn=Depends(get_conn)):
         snapshots = fomo_copilot.list_snapshots(conn, session["account_id"])
+        now = utcnow()
+        bridge = conn.execute(
+            "SELECT bridge_expires_at FROM customer_fomo_bridge_pairs WHERE account_id=?",
+            (session["account_id"],),
+        ).fetchone()
+        paired = bool(bridge and bridge["bridge_expires_at"] and bridge["bridge_expires_at"] > now)
         return {
             "connected": bool(snapshots),
+            "bridge_paired": paired,
             "snapshot_count": len(snapshots),
             "snapshots": snapshots,
             "mode": "read_only_manual",
             "execution_enabled": False,
         }
+
+    @app.post("/v1/customer/fomo-copilot/pairing")
+    def customer_fomo_copilot_pairing(session=Depends(require_customer_write), conn=Depends(get_conn)):
+        pairing_code = secrets.token_urlsafe(12)
+        now = utcnow()
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            "INSERT INTO customer_fomo_bridge_pairs "
+            "(account_id, pairing_hash, pairing_expires_at, bridge_hash, bridge_expires_at, updated_at) "
+            "VALUES (?, ?, ?, NULL, NULL, ?) "
+            "ON CONFLICT(account_id) DO UPDATE SET pairing_hash=excluded.pairing_hash, "
+            "pairing_expires_at=excluded.pairing_expires_at, bridge_hash=NULL, "
+            "bridge_expires_at=NULL, updated_at=excluded.updated_at",
+            (session["account_id"], hashlib.sha256(pairing_code.encode()).hexdigest(), expires, now),
+        )
+        conn.commit()
+        return {"pairing_code": pairing_code, "expires_at": expires, "expires_in_seconds": 300}
+
+    @app.post("/v1/customer/fomo-copilot/pair")
+    def customer_fomo_copilot_pair(body: CustomerFomoPairRequest, conn=Depends(get_conn)):
+        now = utcnow()
+        row = conn.execute(
+            "SELECT account_id, pairing_hash, pairing_expires_at FROM customer_fomo_bridge_pairs"
+        ).fetchall()
+        supplied_hash = hashlib.sha256(body.pairing_code.encode()).hexdigest()
+        matched = next((item for item in row
+                        if item["pairing_expires_at"] > now
+                        and hmac.compare_digest(item["pairing_hash"], supplied_hash)), None)
+        if not matched:
+            raise HTTPException(status_code=401, detail="Pairing code is invalid or expired. Generate a new code in SignalForce.")
+        bridge_key = secrets.token_urlsafe(32)
+        expires = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            "UPDATE customer_fomo_bridge_pairs SET pairing_hash='', pairing_expires_at=?, "
+            "bridge_hash=?, bridge_expires_at=?, updated_at=? WHERE account_id=?",
+            (now, hashlib.sha256(bridge_key.encode()).hexdigest(), expires, now, matched["account_id"]),
+        )
+        conn.commit()
+        return {"bridge_key": bridge_key, "expires_at": expires}
 
     @app.post("/v1/customer/fomo-copilot/snapshot")
     def customer_fomo_copilot_snapshot(
@@ -489,12 +542,48 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         conn.commit()
         return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
 
+    @app.post("/v1/customer/fomo-copilot/bridge-snapshot")
+    def customer_fomo_copilot_bridge_snapshot(
+        body: CustomerFomoSnapshotRequest,
+        request: Request,
+        conn=Depends(get_conn),
+    ):
+        bridge_key = request.headers.get("X-Fomo-Bridge-Key", "")
+        if not bridge_key:
+            raise HTTPException(status_code=401, detail="Local bridge key required")
+        supplied_hash = hashlib.sha256(bridge_key.encode()).hexdigest()
+        row = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE bridge_hash=? AND bridge_expires_at>?",
+            (supplied_hash, utcnow()),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Local bridge key is invalid or expired")
+        try:
+            encoded = fomo_copilot.validate_snapshot(body.snapshot_type, body.payload)
+            observed_at = fomo_copilot.parse_observed_at(body.observed_at)
+        except fomo_copilot.FomoSnapshotError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        now = utcnow()
+        conn.execute(
+            "INSERT INTO customer_fomo_snapshots "
+            "(account_id, snapshot_type, payload_json, source, observed_at, created_at) "
+            "VALUES (?, ?, ?, 'fomo-local-bridge', ?, ?) "
+            "ON CONFLICT(account_id, snapshot_type) DO UPDATE SET "
+            "payload_json=excluded.payload_json, source=excluded.source, "
+            "observed_at=excluded.observed_at, created_at=excluded.created_at",
+            (row["account_id"], body.snapshot_type, encoded, observed_at, now),
+        )
+        conn.commit()
+        return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
+
     @app.delete("/v1/customer/fomo-copilot")
     def customer_fomo_copilot_disconnect(
         session=Depends(require_customer_write),
         conn=Depends(get_conn),
     ):
         conn.execute("DELETE FROM customer_fomo_snapshots WHERE account_id=?", (session["account_id"],))
+        conn.execute("DELETE FROM customer_fomo_bridge_pairs WHERE account_id=?", (session["account_id"],))
         conn.commit()
         return {"disconnected": True}
 
