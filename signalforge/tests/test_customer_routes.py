@@ -147,7 +147,7 @@ def test_public_homepage_serves_customer_launch_experience():
     assert response.status_code == 200
     assert "Fresh launches" in response.text
     assert "Customer workspace" in response.text
-    assert "PAPER DESK" not in response.text
+    assert "CUSTOMER PAPER DESK" in response.text
 
 
 def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
@@ -182,15 +182,17 @@ def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
     assert client_b.post("/v1/customer/paper-trader/pause",
                          headers={"X-CSRF-Token": csrf_b}, json={}).json()["paper_trader"] is None
 
-def test_public_terminal_route_serves_market_terminal_and_customer_workspace_links_back():
+def test_customer_routes_serve_customer_desk_and_keep_operator_console_separate():
     client = _client()
-    terminal = client.get("/terminal")
-    assert terminal.status_code == 200
-    assert "SignalForce — Solana Intelligence" in terminal.text
-    assert 'href="/account"' in terminal.text
-    account = client.get("/account")
-    assert account.status_code == 200
-    assert "CUSTOMER PAPER DESK" in account.text
-    assert 'href="/terminal"' not in account.text
-    assert "No wallet connection or API key is required" in account.text
+    for path in ("/", "/account", "/terminal"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "CUSTOMER PAPER DESK" in response.text
+        assert "No wallet connection or API key is required" in response.text
+        assert 'href="/terminal"' not in response.text
+
+    operator = client.get("/operator")
+    assert operator.status_code == 200
+    assert "SignalForce — Solana Intelligence" in operator.text
+    assert 'href="/account"' in operator.text
 
