@@ -72,6 +72,8 @@ class ReadOnlyFomoBrowser {
     this.sessionBlocked = false;
     this.authWaiters = [];
     this.leaderboardRequests = new Set();
+    this.traderSwapCache = new Map();
+    this.traderSwapCursor = 0;
   }
 
   async connect() {
@@ -349,7 +351,7 @@ function cleanSwaps(rows, hasNextPage) {
     "humanUsdAmountOut", "inAmount", "inHumanAmount", "inNetworkId",
     "inTokenAddress", "inTradeId", "isCrossmint", "isOffPlatform", "networkId",
     "outAmount", "outHumanAmount", "outNetworkId", "outTokenAddress",
-    "outTradeId", "provider"
+    "outTradeId", "provider", "signature", "txHash", "transactionHash", "transactionSignature", "inNetworkId", "outNetworkId"
   ];
   return {
     swaps: rows.slice(0, 100).map(row => {
@@ -416,6 +418,71 @@ async function loadSpotSwaps(browser) {
   return cleanSwaps(swaps, hasNextPage);
 }
 
+async function loadQualifiedTraderSwaps(browser) {
+  const response = await fetch(SIGNALFORCE + "/v1/customer/fomo-copilot/bridge-targets", {
+    method: "GET",
+    headers: { "X-Fomo-Bridge-Key": bridgeKey, Accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+    cache: "no-store"
+  });
+  const targetsPayload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(targetsPayload.detail || "Could not load qualified FOMO trader targets.");
+  const targets = Array.isArray(targetsPayload.qualified_traders)
+    ? targetsPayload.qualified_traders.filter(item =>
+        item && typeof item.user_id === "string" && item.user_id.length > 0 && item.user_id.length <= 128
+      ).slice(0, 25)
+    : [];
+  const targetIds = new Set(targets.map(item => item.user_id));
+  for (const cachedId of browser.traderSwapCache.keys()) {
+    if (!targetIds.has(cachedId)) browser.traderSwapCache.delete(cachedId);
+  }
+  if (!targets.length) {
+    browser.traderSwapCursor = 0;
+    await sendSnapshot("trader_spot_swaps", { traders: [], note: "No FOMO trader currently passes all configured qualification rules." });
+    return { checked: 0, qualified: 0 };
+  }
+
+  // Rotate five traders per minute so a full top-25 refresh takes about five minutes.
+  const batchSize = Math.min(5, targets.length);
+  const start = browser.traderSwapCursor % targets.length;
+  const batch = [];
+  for (let index = 0; index < batchSize; index += 1) {
+    batch.push(targets[(start + index) % targets.length]);
+  }
+  browser.traderSwapCursor = (start + batchSize) % targets.length;
+
+  let checked = 0;
+  for (const trader of batch) {
+    try {
+      const data = await fomoGet(
+        browser,
+        "/v2/users/" + encodeURIComponent(trader.user_id) + "/swaps?swapType=spot"
+      );
+      const responseObject = data?.responseObject || {};
+      const rows = Array.isArray(responseObject.swaps) ? responseObject.swaps.slice(0, 25) : [];
+      const cleaned = cleanSwaps(rows, Boolean(responseObject.hasNextPage));
+      browser.traderSwapCache.set(trader.user_id, {
+        user_id: trader.user_id,
+        handle: String(trader.handle || "FOMO trader").slice(0, 80),
+        swaps: cleaned.swaps,
+        observed_at: new Date().toISOString()
+      });
+      checked += 1;
+    } catch (error) {
+      process.stdout.write("Trader swaps (" + String(trader.handle || trader.user_id).slice(0, 40) + "): " + error.message + "\n");
+    }
+  }
+  const snapshotRows = Array.from(browser.traderSwapCache.values()).slice(0, 25);
+  await sendSnapshot("trader_spot_swaps", {
+    traders: snapshotRows,
+    checked_this_poll: checked,
+    qualified_trader_count: targets.length,
+    refresh_cycle: "five traders per minute; top 25 rotate",
+    note: "Read-only FOMO spot-swap observations for leaderboard-qualified accounts. These are not independently chain-verified."
+  });
+  return { checked, qualified: targets.length };
+}
+
 async function pollOnce(browser) {
   if (pollRunning) return;
   pollRunning = true;
@@ -440,6 +507,12 @@ async function pollOnce(browser) {
       } catch (error) {
         process.stdout.write(type + ": " + error.message + "\n");
       }
+    }
+    try {
+      const activity = await loadQualifiedTraderSwaps(browser);
+      process.stdout.write("Qualified trader swaps checked · " + activity.checked + "/" + activity.qualified + " this cycle.\n");
+    } catch (error) {
+      process.stdout.write("Qualified trader swaps: " + error.message + "\n");
     }
     process.stdout.write("FOMO snapshots checked · next poll in 60 seconds.\n");
   } finally {
