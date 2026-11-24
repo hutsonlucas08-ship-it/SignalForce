@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -477,6 +477,48 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "mode": "read_only_manual",
             "execution_enabled": False,
         }
+
+    @app.get("/v1/customer/fomo-copilot/callouts")
+    async def customer_fomo_callouts(
+        limit: int = 50,
+        session=Depends(require_customer),
+        conn=Depends(get_conn),
+    ):
+        """Generate manual-review candidates from fresh, observed Solana assets."""
+        if limit < 1 or limit > 50:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+        assets = scan_assets(conn, limit)
+        mints = [item["asset_id"] for item in assets if isinstance(item.get("asset_id"), str)]
+        pairs = []
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            for start in range(0, len(mints), 30):
+                batch = mints[start:start + 30]
+                if not batch:
+                    continue
+                try:
+                    response = await client.get(
+                        "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch),
+                        headers={"Accept": "application/json"},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if isinstance(payload, list):
+                        pairs.extend(payload)
+                except (httpx.HTTPError, ValueError):
+                    log.warning("Customer callout market-data request failed")
+        result = fomo_signals.build_callouts(assets, pairs)
+        # FOMO activity is surfaced as context only. It is not represented as public-whale proof.
+        snapshots = fomo_copilot.list_snapshots(conn, session["account_id"])
+        spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
+        spot_payload = (spot or {}).get("payload") or {}
+        swaps = spot_payload.get("swaps") or []
+        result["fomo_context"] = {
+            "connected_spot_swap_snapshot": bool(spot),
+            "observed_spot_swaps": len(swaps),
+            "observed_at": (spot or {}).get("observed_at"),
+            "interpretation": "Your own imported FOMO activity only; not public trader or whale performance.",
+        }
+        return result
 
     @app.post("/v1/customer/fomo-copilot/pairing")
     def customer_fomo_copilot_pairing(session=Depends(require_customer_write), conn=Depends(get_conn)):
