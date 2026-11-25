@@ -44,7 +44,7 @@ async def _send_customer_trade_alerts(client, conn, after_trade_id):
                   t.realized_pnl_usd,t.reason,a.account_id
            FROM customer_paper_trades t
            JOIN customer_paper_accounts a ON a.id=t.paper_account_id
-           WHERE t.id>? ORDER BY t.id""",
+           WHERE t.id>? AND t.paper_session_id IS NOT NULL ORDER BY t.id""",
         (int(after_trade_id),),
     ).fetchall()
     sent_count = 0
