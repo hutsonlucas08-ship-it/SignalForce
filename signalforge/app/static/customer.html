@@ -92,6 +92,23 @@ td{color:#dce7ed}
 @media(max-width:1050px){.workspace-layout{grid-template-columns:minmax(0,1fr) 330px;gap:12px}}
 @media(max-width:760px){.workspace-layout{grid-template-columns:1fr}.x-live-sidebar{position:static;height:70vh;min-height:420px;order:2}#xCalloutsCard{height:70vh}}
 
+
+/* Dock the live X feed to the actual right edge of the browser viewport. */
+@media(min-width:761px){
+ :root{--sf-x-sidebar-width:clamp(340px,26vw,440px)}
+ .wrap:has(.workspace-layout){max-width:none;margin:0;padding-right:calc(var(--sf-x-sidebar-width) + 22px)}
+ .workspace-layout{display:block;width:100%}
+ .workspace-main{min-width:0}
+ .x-live-sidebar{position:fixed;top:0;right:0;bottom:0;width:var(--sf-x-sidebar-width);height:100vh;height:100dvh;min-height:0;padding:10px;background:#080d09;border-left:1px solid var(--line);z-index:100}
+ #xCalloutsCard{height:100%;border-radius:0;margin:0!important}
+}
+@media(max-width:760px){
+ .wrap:has(.workspace-layout){max-width:none;padding-right:22px}
+ .workspace-layout{display:block}
+ .x-live-sidebar{position:static;width:auto;height:70vh;min-height:420px;margin-top:16px;padding:0;border:0}
+ #xCalloutsCard{height:70vh;border-radius:13px}
+}
+
 </style></head><body><div class="wrap">
 <header class="top"><div class="brand"><div class="mark">S</div><div><strong>SIGNALFORCE</strong><small>Customer workspace</small></div></div><div class="actions"><span class="pill">CUSTOMER PAPER DESK</span><span class="tag">PAPER ONLY · NO WALLET SIGNING</span></div></header>
 <div id="entryLayout" class="entry-layout"><section id="launchSection" class="card launch-section"><div class="launch-heading"><div><div class="eyebrow">LIVE SOLANA DISCOVERY</div><h2>Fresh launches</h2><p>Newest pools first · GeckoTerminal with DexScreener backup</p></div><button class="btn" id="refreshLaunches">Refresh</button></div><div id="launchFeed" class="launch-grid"><div class="empty">Loading newest Solana launches…</div></div><p class="small" id="launchNote">New pool creation is a discovery signal, not proof of legitimacy or safety. Always review liquidity, holders, authorities and trading activity.</p></section>
