@@ -285,8 +285,8 @@ async function loadCopytopFeed(){
 
   tradesHost.innerHTML=tradeRows.length?tradeRows.slice(0,20).map(x=>{
    const side=String(x.side||"unknown").toUpperCase();
-   const mint=x.mint?'<small class="mono">'+esc(x.mint)+'</small>'+tokenActions(x.mint):"";
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(x.handle)+' · '+esc(side)+' '+esc(x.symbol||"?")+'</strong><small style="display:block;color:#91a0ad">'+esc(x.token_name||"")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small>'+mint+(x.mint?tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div>';
+   const mint=x.mint?'<small class="mono">'+esc(x.mint)+'</small>'+tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>';
+   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(x.handle)+' · '+esc(side)+' '+esc(x.symbol||"?")+'</strong><small style="display:block;color:#91a0ad">'+esc(x.token_name||"")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small>'+mint+'</div>';
   }).join(""):'<div class="empty">'+esc(errors.live_trades||"No recent trades returned for the current FOMO leaderboard watchlist.")+'</div>';
   leaderHost.innerHTML=leaderRows.length?leaderRows.slice(0,20).map((x,i)=>{
    const fair=String(x.fair_play||"not reported").replaceAll("_"," ");
