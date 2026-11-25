@@ -300,6 +300,21 @@ async function loadXCallouts(){
 }
 $("refreshXCallouts").onclick=loadXCallouts;
 
+$("syncXWatchlist").onclick=async()=>{
+ const button=$("syncXWatchlist"),status=$("xCalloutStatus");
+ if(button.dataset.loading==="1")return;
+ button.dataset.loading="1";button.disabled=true;
+ status.textContent="Syncing your imported X accounts to J7Tracker. Paid tracking slots will not be used.";
+ try{
+  const result=await request("/v1/customer/x-callouts/sync-watchlist",{method:"POST"});
+  status.textContent="SYNC COMPLETE · "+result.already_active+" active · "+result.unhidden+" restored · "+result.added_available+" added free · "+result.not_available_or_custom_slot_required.length+" unavailable. No paid slots used.";
+  if(result.not_available_or_custom_slot_required.length)status.title="Not yet tracked: "+result.not_available_or_custom_slot_required.join(", ");
+  await loadXCallouts();
+ }catch(error){status.textContent="Watchlist sync failed: "+error.message;status.classList.add("error");}
+ finally{button.dataset.loading="0";button.disabled=false;}
+};
+
+
 async function loadCopytopFeed(){
  const status=$("providerFeedStatus"),tradesHost=$("providerLiveTrades"),leaderHost=$("providerLeaderboard"),hotHost=$("providerHotCoins");
  const refreshButton=$("refreshProviderFeed");
