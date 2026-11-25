@@ -35,6 +35,16 @@ def test_dexscreener_fallback_joins_solana_profile_to_best_liquidity_pair():
     assert rows[0]["symbol"] == "TKN"
 
 
+def test_dexscreener_fallback_respects_expanded_discovery_limit():
+    profiles = [
+        {"chainId": "solana", "tokenAddress": f"Mint{i:03d}"}
+        for i in range(35)
+    ]
+    rows = launch_feed.normalize_dexscreener_latest(profiles, [], limit=30)
+    assert len(rows) == 30
+    assert rows[-1]["asset_id"] == "Mint029"
+
+
 def test_dexscreener_fallback_handles_missing_pairs_and_invalid_profiles():
     rows = launch_feed.normalize_dexscreener_latest(
         [
