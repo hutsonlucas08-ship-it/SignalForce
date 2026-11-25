@@ -551,6 +551,8 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                         signals = paper_bot._recent_wallet_buy_signals(conn)
                         observed = paper_bot.scan_assets(conn, 100)
                         launches = await paper_bot._fetch_gecko_new_launches(client)
+                        if not launches:
+                            launches = await paper_bot._fetch_dexscreener_profile_launches(client)
                         names = {
                             item["asset_id"]: item.get("token_name")
                             for item in (observed + launches) if item.get("asset_id")
