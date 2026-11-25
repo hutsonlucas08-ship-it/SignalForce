@@ -8,23 +8,23 @@ def test_normalizes_x_post_and_safe_post_url():
     item = _normalize({
         "id": "123456789",
         "createdAt": 1764000000000,
-        "author": {"handle": "alpha", "name": "Alpha", "verified": True},
+        "author": {"handle": "elonmusk", "name": "Elon Musk", "verified": True},
         "text": "New token " + SOL_MINT,
-        "tweetUrl": "https://x.com/alpha/status/123456789",
+        "tweetUrl": "https://x.com/elonmusk/status/123456789",
         "contractAddress": SOL_MINT,
         "extraContractAddresses": ["invalid"],
     })
     assert item["platform"] == "X"
-    assert item["url"] == "https://x.com/alpha/status/123456789"
+    assert item["url"] == "https://x.com/elonmusk/status/123456789"
     assert item["contracts"] == [SOL_MINT]
 
 
 def test_rejects_untrusted_post_url_and_non_solana_contracts():
     item = _normalize({
         "id": "123456789",
-        "author": {"handle": "alpha"},
+        "author": {"handle": "elonmusk"},
         "text": "hello",
-        "tweetUrl": "https://phishing.example/alpha/status/123",
+        "tweetUrl": "https://phishing.example/elonmusk/status/123",
         "contractAddress": "0x0000000000000000000000000000000000000000",
     })
     assert item["url"] == "https://x.com/alpha/status/123456789"
