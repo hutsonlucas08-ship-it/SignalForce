@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed, launch_feed, j7_feed
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed, launch_feed, j7_feed, axiom_watchlist_sync
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -474,6 +474,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return {"disconnected": customer_integrations.disconnect_customer_integration(conn, session["account_id"], provider)}
         except customer_integrations.CustomerIntegrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.post("/v1/customer/x-callouts/sync-watchlist")
+    async def customer_x_callouts_sync_watchlist(session=Depends(require_customer_write)):
+        """Sync available imported Axiom handles to J7 without consuming paid custom slots."""
+        jwt = os.getenv("J7TRACKER_JWT", "").strip()
+        if not jwt:
+            raise HTTPException(status_code=503, detail="J7Tracker is not configured on this SignalForce deployment.")
+        try:
+            return await axiom_watchlist_sync.sync_available_accounts(jwt)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in (401, 403):
+                raise HTTPException(status_code=502, detail="J7Tracker rejected the configured session. Refresh J7TRACKER_JWT in Render.")
+            raise HTTPException(status_code=502, detail=f"J7Tracker watchlist sync failed (HTTP {status}).")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Could not reach J7Tracker to sync the watchlist.")
+        except (ValueError, RuntimeError):
+            raise HTTPException(status_code=502, detail="J7Tracker returned an unexpected watchlist response.")
 
     @app.get("/v1/customer/x-callouts")
     def customer_x_callouts(limit: int = 100, session=Depends(require_customer)):
