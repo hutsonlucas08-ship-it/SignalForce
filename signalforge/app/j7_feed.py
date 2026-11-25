@@ -189,7 +189,7 @@ async def run_feed(stop_event: asyncio.Event, jwt: str) -> None:
     @client.on("initialTweets")
     async def initial_tweets(items):
         _EVENTS.clear()
-        for item in reversed(items) if isinstance(items, list) else []:
+        for item in (reversed(items) if isinstance(items, list) else []):
             if isinstance(item, dict) and item.get("isWebhook"):
                 _upsert(item, "webhook")
             elif isinstance(item, dict) and item.get("source") != "external":
