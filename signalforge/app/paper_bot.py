@@ -22,6 +22,7 @@ _BUBBLE_CACHE = {}
 _GECKO_LAUNCH_CACHE = (0.0, [])
 _GECKO_RETRY_AFTER = 0.0
 _STALE_ALERTED = {}
+_TELEGRAM_CONFIG_WARNING_LOGGED = False
 INTERVAL_SECONDS = 30.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
 MIN_DISTINCT_WALLET_BUYS = 1
@@ -451,20 +452,29 @@ async def _approved_candidates(client, pairs, eligible_mints=None):
 
 
 async def _telegram_send(client, text):
+    global _TELEGRAM_CONFIG_WARNING_LOGGED
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
+        if not _TELEGRAM_CONFIG_WARNING_LOGGED:
+            log.warning("Telegram paper alerts are disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set in Render.")
+            _TELEGRAM_CONFIG_WARNING_LOGGED = True
         return
     try:
         response = await client.post(
             "https://api.telegram.org/bot" + token + "/sendMessage",
             json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
         )
-        response.raise_for_status()
-        if not response.json().get("ok"):
-            log.warning("Telegram paper alert was not accepted")
-    except (httpx.HTTPError, ValueError):
-        log.warning("Telegram paper alert delivery failed")
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        if not response.is_success or not payload.get("ok"):
+            description = payload.get("description") if isinstance(payload, dict) else None
+            log.warning("Telegram paper alert rejected (HTTP %s): %s", response.status_code, str(description or "no provider detail")[:180])
+    except httpx.HTTPError as exc:
+        # Do not log the request URL: Telegram embeds the bot token in that URL.
+        log.warning("Telegram paper alert delivery failed (%s)", type(exc).__name__)
 
 
 async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
