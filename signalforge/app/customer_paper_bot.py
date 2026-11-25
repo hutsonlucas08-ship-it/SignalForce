@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -36,8 +37,8 @@ MODE_RULES = {
 
 async def _send_customer_trade_alerts(client, conn, after_trade_id):
     """Send Telegram alerts for customer paper trades created in this worker cycle."""
-    token = __import__("os").getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = __import__("os").getenv("TELEGRAM_CHAT_ID")
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         global _telegram_config_warning_logged
         if not _telegram_config_warning_logged:
@@ -88,6 +89,31 @@ async def _send_customer_trade_alerts(client, conn, after_trade_id):
     if rows:
         log.info("Customer paper Telegram alerts: %s sent from %s new trade(s)", sent_count, len(rows))
     return sent_count
+
+async def _send_customer_telegram_connection_test(client):
+    """Send one startup test so Telegram configuration is verified before a trade occurs."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        log.warning("Customer paper Telegram connection test skipped: required environment variables are missing")
+        return False
+    try:
+        response = await client.post(
+            "https://api.telegram.org/bot" + token + "/sendMessage",
+            json={"chat_id": chat_id, "text": "SignalForce Telegram connection test: customer paper-trade alerts are enabled. Paper trading only; no real funds moved.", "disable_web_page_preview": True},
+        )
+        try:
+            payload = response.json()
+        except (ValueError, TypeError):
+            payload = {}
+        if response.is_success and isinstance(payload, dict) and payload.get("ok"):
+            log.info("Customer paper Telegram connection test delivered successfully")
+            return True
+        description = payload.get("description") if isinstance(payload, dict) else None
+        log.warning("Customer paper Telegram connection test rejected (HTTP %s): %s", response.status_code, str(description or "no provider detail")[:180])
+    except httpx.HTTPError as exc:
+        log.warning("Customer paper Telegram connection test failed (%s)", type(exc).__name__)
+    return False
 
 
 def _number(value, default=0.0):
@@ -577,6 +603,7 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
         RISK_MONITOR_INTERVAL_SECONDS, STRATEGY_SCAN_INTERVAL_SECONDS,
     )
     async with httpx.AsyncClient(timeout=8.0, headers={"Accept": "application/json"}) as client:
+        await _send_customer_telegram_connection_test(client)
         while not stop_event.is_set():
             started = time.monotonic()
             conn = None
