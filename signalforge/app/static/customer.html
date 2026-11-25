@@ -116,6 +116,12 @@ td{color:#dce7ed}
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
   <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. The 0–100 score is a rule-based screening score, not a win probability. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
+  <div class="card" id="xCalloutsCard" style="margin:12px 0">
+   <div class="head"><div><div class="eyebrow">LIVE X / TWITTER CALLOUTS</div><h2>Live social callouts · J7Tracker</h2><p>New posts from the X accounts in your J7Tracker feed, with token contracts linked when detected.</p></div><button class="btn primary" id="refreshXCallouts" type="button">Refresh X feed</button></div>
+   <div id="xCalloutStatus" class="message">Checking J7Tracker live feed…</div>
+   <div id="xCalloutFeed" class="launch-grid"><div class="empty">Waiting for X posts…</div></div>
+   <p class="small">Read-only social feed. Posts and mentions are not verified trade signals. Token links appear only when J7Tracker supplies a valid Solana contract address.</p>
+  </div>
   <div class="card" style="margin:12px 0">
    <div class="head"><div><div class="eyebrow">INDEPENDENT FOMO DATA PROVIDER</div><h2>Live FOMO intelligence · Copy.top</h2><p>Public leaderboard and live activity for FOMO traders. This is a separate provider feed, not your private FOMO session.</p></div><button class="btn primary" id="refreshProviderFeed" type="button">Refresh live feed</button></div>
    <div id="providerFeedStatus" class="message">Connecting to the independent FOMO data provider…</div>
@@ -232,7 +238,7 @@ function fomoStamp(value){if(!value)return "Unknown time";const date=new Date(va
 async function loadFomoCallouts(){
  const status=$("calloutStatus"),host=$("calloutList");
  try{
-  const data=await request("/v1/customer/fomo-copilot/callouts?limit=50");
+  const data=await request("/v1/customer/fomo-copilot/callouts?limit=100");
   const rows=data.callouts||[];
   const scanned=Number(data.scanned_assets||0);
   status.textContent=(scanned===0?"SCAN INPUT EMPTY · ":"SCAN COMPLETE · ")+rows.length+" candidates · "+scanned+" assets evaluated · "+(data.gecko_terminal_new_pools_seen||0)+" new pools seen · "+data.source+" · "+fomoStamp(data.generated_at);
@@ -244,7 +250,7 @@ async function loadFomoCallouts(){
    const ownLabel=own?'Your FOMO history: '+own.swap_count+' matching swap records'+(own.sides&&own.sides.length?' ('+own.sides.join('/')+')':''):'No matching swap in your imported FOMO history';
    const qualified=x.qualified_trader_activity;
    const qualifiedLabel=qualified?'Recent FOMO-qualified buys: '+qualified.buy_count+' · '+(qualified.traders||[]).join(', ')+' · Not chain-verified':'No fresh buy observed from a qualified FOMO leaderboard account';
-   return '<article class="launch-card"><div style="min-width:0;width:100%"><strong>'+esc(x.name)+' <span class="muted">'+esc(x.symbol)+'</span> · '+esc(x.tier.toUpperCase())+' '+esc(x.score)+'/100</strong><small>'+esc(x.asset_id)+'</small>'+tokenActions(x.asset_id)+'<small class="launch-meta">Price '+usd(x.price_usd)+' · Liquidity '+usd(x.liquidity_usd)+' · 1h volume '+usd(x.volume_1h_usd)+'</small><small>5m change '+esc(change)+' · Buys '+esc(x.buys_5m)+' / sells '+esc(x.sells_5m)+' · observation '+esc(age)+'m old</small><small>'+esc((x.reasons||[]).join(' · '))+'</small><small>'+esc(ownLabel)+'</small><small>'+esc(qualifiedLabel)+'</small><small><a href="'+esc(x.fomo_phone_url)+'" target="_blank" rel="noopener noreferrer">FOMO app ↗</a> · <a href="'+esc(x.fomo_web_url)+'" target="_blank" rel="noopener noreferrer">FOMO web ↗</a></small><small><a href="'+esc(x.market_url)+'" target="_blank" rel="noopener noreferrer">DexScreener ↗</a> · <a href="'+esc(x.solscan_url)+'" target="_blank" rel="noopener noreferrer">Solscan ↗</a> · <button type="button" class="btn" data-copy-mint="'+esc(x.asset_id)+'">Copy contract</button></small><small class="small">Watchlist only — no entry, stop or targets. Verify the token and slippage before deciding anything.</small></div></article>';
+   return '<article class="launch-card"><div style="min-width:0;width:100%"><strong>'+esc(x.name)+' <span class="muted">'+esc(x.symbol)+'</span> · '+esc(x.tier.toUpperCase())+' '+esc(x.score)+'/100</strong><small>'+esc(x.asset_id)+'</small>'+tokenActions(x.asset_id)+'<small class="launch-meta">Price '+usd(x.price_usd)+' · Liquidity '+usd(x.liquidity_usd)+' · 1h volume '+usd(x.volume_1h_usd)+'</small><small>5m change '+esc(change)+' · Buys '+esc(x.buys_5m)+' / sells '+esc(x.sells_5m)+' · observation '+esc(age)+'m old</small><small>'+esc((x.reasons||[]).join(' · '))+'</small><small>'+esc(ownLabel)+'</small><small>'+esc(qualifiedLabel)+'</small><small><a href="'+esc(x.market_url)+'" target="_blank" rel="noopener noreferrer">DexScreener ↗</a> · <a href="'+esc(x.solscan_url)+'" target="_blank" rel="noopener noreferrer">Solscan ↗</a> · <button type="button" class="btn" data-copy-mint="'+esc(x.asset_id)+'">Copy contract</button></small><small class="small">Watchlist only — no entry, stop or targets. Verify the token and slippage before deciding anything.</small></div></article>';
   }).join(""):(scanned===0?'<div class="empty">No eligible token inputs reached the scanner this cycle, so no assets were evaluated. Check the discovery feed and imported FOMO activity; filters were not evaluated.</div>':'<div class="empty">Assets were evaluated, but none passed the current freshness, liquidity and volume filters. Filters are not relaxed to force signals.</div>');
   host.querySelectorAll("[data-copy-mint]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.getAttribute("data-copy-mint"));button.textContent="Copied";}catch(_){button.textContent="Copy unavailable";}}));
   const context=data.fomo_context||{};
@@ -266,6 +272,34 @@ $("sendCalloutTelegram").onclick=async()=>{const button=$("sendCalloutTelegram")
 function providerMoney(value){if(value===null||value===undefined||value==="")return "—";const n=Number(String(value).replace(/[$,]/g,""));return !Number.isFinite(n)?"—":usd(n)}
 function providerPercent(value){if(value===null||value===undefined||value==="")return "not reported";const n=Number(String(value).replace("%",""));if(!Number.isFinite(n))return String(value);return (n<=1?n*100:n).toFixed(1)+"%"}
 function providerTime(value){if(!value)return "time unavailable";const d=new Date(value);return Number.isNaN(d.getTime())?"time unavailable":d.toLocaleTimeString()}
+async function loadXCallouts(){
+ const status=$("xCalloutStatus"),host=$("xCalloutFeed"),button=$("refreshXCallouts");
+ if(button&&button.dataset.loading==="1")return;
+ if(button){button.dataset.loading="1";button.disabled=true;}
+ try{
+  const data=await request("/v1/customer/x-callouts?limit=100");
+  const events=data.events||[];
+  status.textContent=!data.configured
+   ?"J7TRACKER NOT CONNECTED · Add your J7Tracker JWT as the private Render environment variable J7TRACKER_JWT."
+   :data.connected
+    ?"J7TRACKER LIVE · "+events.length+" recent posts/callouts · "+(data.upstream_connected===false?"upstream X source reconnecting":"stream connected")
+    :"J7TRACKER "+String(data.state||"WAITING").toUpperCase()+" · "+(data.last_error||"Waiting for live posts.");
+  status.classList.toggle("error",!data.connected);
+  host.innerHTML=events.length?events.map(item=>{
+   const contracts=item.contracts||[];
+   const stamp=item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable";
+   const metrics=[item.likes!=null?"♥ "+item.likes:null,item.retweets!=null?"↻ "+item.retweets:null,item.replies!=null?"Replies "+item.replies:null].filter(Boolean).join(" · ");
+   const contractHtml=contracts.length?contracts.map(mint=>tokenActions(mint)).join(""):'<small class="muted">No verified Solana contract attached to this post.</small>';
+   return '<article class="launch-card"><div style="min-width:0;width:100%"><strong>'+esc(item.author_name||item.author||"X account")+' <span class="muted">@'+esc(item.author||"unknown")+'</span> '+(item.verified?'<span class="status">VERIFIED</span>':'')+'</strong><small>'+esc(item.platform||"X")+' · '+esc(stamp)+' · '+esc(item.kind==="webhook"?"J7 launch alert":"X post")+'</small><p style="font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0">'+esc(item.text||"")+'</p>'+contractHtml+(metrics?'<small>'+esc(metrics)+'</small>':'')+(item.url?'<small><a href="'+esc(item.url)+'" target="_blank" rel="noopener noreferrer">Open original post ↗</a></small>':'')+'</div></article>';
+  }).join(""):'<div class="empty">'+(data.configured?"No recent X posts or launch alerts in the J7Tracker feed yet.":"Connect J7Tracker to start receiving live X callouts.")+'</div>';
+ }catch(error){
+  status.textContent="Live X feed unavailable: "+error.message;
+  status.classList.add("error");
+  host.innerHTML='<div class="empty">J7Tracker feed could not be loaded.</div>';
+ }finally{if(button){button.dataset.loading="0";button.disabled=false;}}
+}
+$("refreshXCallouts").onclick=loadXCallouts;
+
 async function loadCopytopFeed(){
  const status=$("providerFeedStatus"),tradesHost=$("providerLiveTrades"),leaderHost=$("providerLeaderboard"),hotHost=$("providerHotCoins");
  const refreshButton=$("refreshProviderFeed");
@@ -317,6 +351,7 @@ async function loadFomoCopilot(){
   const snapshots=data.snapshots||[];
   loadFomoCallouts().catch(()=>{});
   loadCopytopFeed().catch(()=>{});
+  loadXCallouts().catch(()=>{});
   host.innerHTML=snapshots.length?snapshots.map(snapshot=>{
    const payload=snapshot.payload||{};
    const rows=payload.swaps||payload.clans||payload.traders||[];
@@ -372,15 +407,16 @@ function tokenActions(mint){
  const encoded=encodeURIComponent(value);
  const axiomUrl="https://axiom.trade/t/"+encoded+"?chain=sol";
  const pumpUrl="https://pump.fun/coin/"+encoded;
- return '<small class="coin-actions"><a href="'+axiomUrl+'" target="_blank" rel="noopener noreferrer" title="Open this Solana token in Axiom">Axiom ↗</a> · <a href="'+pumpUrl+'" target="_blank" rel="noopener noreferrer" title="Fallback: open this token on pump.fun">pump.fun fallback ↗</a> · <button class="btn" type="button" data-open-fomo="'+esc(value)+'">Copy CA + open FOMO</button></small>';
+ const dexUrl="https://dexscreener.com/solana/"+encoded;
+ const solscanUrl="https://solscan.io/token/"+encoded;
+ return '<small class="coin-actions"><a href="'+axiomUrl+'" target="_blank" rel="noopener noreferrer" title="Open this Solana token in Axiom">Axiom ↗</a> · <a href="'+pumpUrl+'" target="_blank" rel="noopener noreferrer" title="Fallback: open this token on pump.fun">pump.fun ↗</a> · <a href="'+dexUrl+'" target="_blank" rel="noopener noreferrer">DexScreener ↗</a> · <a href="'+solscanUrl+'" target="_blank" rel="noopener noreferrer">Solscan ↗</a> · <button class="btn" type="button" data-copy-contract="'+esc(value)+'">Copy CA</button></small>';
 }
 document.addEventListener("click",async event=>{
- const button=event.target.closest("[data-open-fomo]");
+ const button=event.target.closest("[data-copy-contract]");
  if(!button)return;
- const mint=button.getAttribute("data-open-fomo");
- window.open("https://fomo.family/discover","_blank","noopener");
- try{await navigator.clipboard.writeText(mint);button.textContent="Copied · paste in FOMO search";}
- catch(_){button.textContent="FOMO opened · copy contract above";}
+ const mint=button.getAttribute("data-copy-contract");
+ try{await navigator.clipboard.writeText(mint);button.textContent="Copied";}
+ catch(_){button.textContent="Copy blocked";}
 });
 
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}function usd(v){return "$"+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2})}
