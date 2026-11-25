@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import json
+from pathlib import Path
 from collections import OrderedDict
 from datetime import datetime, timezone
 
@@ -22,8 +24,18 @@ _STATUS = {
     "last_event_at": None,
     "last_error": None,
 }
-_MAX_EVENTS = 200
+_MAX_EVENTS = 500
+_WATCHLIST_DATA = json.loads(Path(__file__).with_name("axiom_x_watchlist.json").read_text(encoding="utf-8"))
+_WATCHLIST = {row["handle"].lower(): row for row in _WATCHLIST_DATA.get("accounts", [])}
 _ALLOWED_POST_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+
+
+def _watchlist_row(handle: str) -> dict | None:
+    return _WATCHLIST.get(str(handle or "").lstrip("@").lower())
+
+
+def watchlist_summary() -> dict:
+    return {"account_count": len(_WATCHLIST), "tweets_enabled": sum(bool(x.get("tweets")) for x in _WATCHLIST.values()), "profile_updates_enabled": sum(bool(x.get("profile_updates")) for x in _WATCHLIST.values()), "follows_enabled": sum(bool(x.get("follows")) for x in _WATCHLIST.values())}
 
 
 def _post_url(item: dict) -> str | None:
@@ -71,6 +83,8 @@ def _normalize(item: dict, kind: str = "x_post") -> dict | None:
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
     webhook = item.get("webhook") if isinstance(item.get("webhook"), dict) else {}
     handle = str(author.get("handle") or "").lstrip("@")[:80]
+    if kind == "x_post" and not _watchlist_row(handle):
+        return None
     text = item.get("text") or webhook.get("content") or ""
     if not isinstance(text, str):
         text = str(text)
@@ -160,6 +174,7 @@ def snapshot(limit: int = 100) -> dict:
         **_STATUS,
         "events": list(_EVENTS.values())[:max(1, min(int(limit), 200))],
         "event_count": len(_EVENTS),
+        "watchlist": watchlist_summary(),
         "source": "J7Tracker live X feed",
         "read_only": True,
         "execution_enabled": False,
