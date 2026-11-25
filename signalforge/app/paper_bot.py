@@ -10,7 +10,7 @@ import uuid
 
 import httpx
 
-from . import exit_rules, paper, position_track
+from . import exit_rules, launch_feed, paper, position_track
 from .db import connect, utcnow
 from .research import scan_assets
 
@@ -21,6 +21,8 @@ OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
 _GECKO_LAUNCH_CACHE = (0.0, [])
 _GECKO_RETRY_AFTER = 0.0
+_DEX_PROFILE_CACHE = (0.0, [])
+_DEX_PROFILE_RETRY_AFTER = 0.0
 _STALE_ALERTED = {}
 _TELEGRAM_CONFIG_WARNING_LOGGED = False
 INTERVAL_SECONDS = 30.0
@@ -249,6 +251,59 @@ async def _fetch_gecko_new_launches(client):
                     type(exc).__name__)
         return list(cached)
 
+
+
+async def _fetch_dexscreener_profile_launches(client):
+    """Fallback discovery for the paper scanners when GeckoTerminal is rate-limited."""
+    global _DEX_PROFILE_CACHE, _DEX_PROFILE_RETRY_AFTER
+    now = time.time()
+    cached_at, cached = _DEX_PROFILE_CACHE
+    if now - cached_at < 60:
+        return list(cached)
+    if now < _DEX_PROFILE_RETRY_AFTER:
+        return list(cached)
+    try:
+        response = await client.get(
+            "https://api.dexscreener.com/token-profiles/latest/v1",
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        profiles = response.json()
+        if not isinstance(profiles, list):
+            raise ValueError("DexScreener profile response was not a list")
+        addresses = list(dict.fromkeys(
+            item.get("tokenAddress") for item in profiles
+            if isinstance(item, dict)
+            and str(item.get("chainId") or "").lower() == "solana"
+            and isinstance(item.get("tokenAddress"), str)
+        ))[:60]
+        pairs = []
+        if addresses:
+            pair_response = await client.get(
+                "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(addresses),
+                headers={"Accept": "application/json"},
+            )
+            pair_response.raise_for_status()
+            pair_payload = pair_response.json()
+            if isinstance(pair_payload, list):
+                pairs = pair_payload
+        normalized = launch_feed.normalize_dexscreener_latest(profiles, pairs, limit=30)
+        result = [{"asset_id": item["asset_id"], "token_name": item.get("name") or item.get("symbol") or item["asset_id"][:8]}
+                  for item in normalized if item.get("asset_id")]
+        _DEX_PROFILE_CACHE = (now, result)
+        _DEX_PROFILE_RETRY_AFTER = 0.0
+        if result:
+            log.info("Paper bot DexScreener fallback discovered %d Solana candidates", len(result))
+        return list(result)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        _DEX_PROFILE_RETRY_AFTER = now + (300 if status == 429 else 90)
+        log.warning("Paper bot DexScreener fallback unavailable (HTTP %s); using cached/other sources", status)
+        return list(cached)
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        _DEX_PROFILE_RETRY_AFTER = now + 90
+        log.warning("Paper bot DexScreener fallback unavailable (%s); using cached/other sources", type(exc).__name__)
+        return list(cached)
 
 def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUTES):
     """Aggregate recent, ingested buys from active tracked wallets only."""
@@ -505,6 +560,8 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                     try:
                         assets = scan_assets(conn, 100)
                         gecko_launches = await _fetch_gecko_new_launches(client)
+                        if not gecko_launches:
+                            gecko_launches = await _fetch_dexscreener_profile_launches(client)
                         wallet_signals = _recent_wallet_buy_signals(conn)
                         # Always reserve room for open positions so they continue to be re-priced.
                         held = _held_mints(conn)
