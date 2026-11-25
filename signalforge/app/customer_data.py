@@ -128,7 +128,7 @@ def list_paper_trades(conn: sqlite3.Connection, account_id: str, paper_account_i
                   t.realized_pnl_usd,t.reason,t.created_at
            FROM customer_paper_trades t
            JOIN customer_paper_accounts a ON a.id=t.paper_account_id
-           WHERE a.account_id=? AND a.id=? ORDER BY t.created_at DESC,t.id DESC LIMIT ?""",
+           WHERE a.account_id=? AND a.id=? AND (a.auto_session_id IS NULL OR t.paper_session_id=a.auto_session_id) ORDER BY t.created_at DESC,t.id DESC LIMIT ?""",
         (account_id, paper_account_id, limit),
     ).fetchall()
     return [dict(row) for row in rows]
@@ -138,6 +138,7 @@ def place_paper_trade(
     conn: sqlite3.Connection, account_id: str, paper_account_id: str, *,
     asset_id: str, side: str, amount_usd: float, price_usd: float,
     token_name: str | None = None, reason: str = "manual paper trade",
+    automated: bool = False,
 ) -> dict:
     if not isinstance(asset_id, str) or not asset_id.strip() or len(asset_id) > 128:
         raise CustomerDataError("A valid token mint is required.")
@@ -151,15 +152,28 @@ def place_paper_trade(
         raise CustomerDataError("Trade amount or price exceeds the supported limit.")
     if token_name is not None and (not isinstance(token_name, str) or len(token_name) > 100):
         raise CustomerDataError("Token name must be 100 characters or fewer.")
-    if not isinstance(reason, str) or not reason.strip() or len(reason) > 200:
+    if not isinstance(reason, str) or not reason.strip():
+        raise CustomerDataError("Trade reason must contain text.")
+    reason = reason.strip()
+    # Internal strategy/risk explanations can grow as scoring details evolve.
+    # Keep automated execution resilient while preserving the API's 200-char limit.
+    if automated:
+        reason = reason[:200]
+    elif len(reason) > 200:
         raise CustomerDataError("Trade reason must be 1–200 characters.")
     account = conn.execute(
-        """SELECT id,cash_balance_usd FROM customer_paper_accounts
+        """SELECT id,cash_balance_usd,auto_session_id,enabled,auto_status FROM customer_paper_accounts
            WHERE id=? AND account_id=?""",
         (paper_account_id, account_id),
     ).fetchone()
     if account is None:
         raise CustomerDataError("Paper account not found.")
+    if account["auto_session_id"] is not None and not automated:
+        raise CustomerDataError("This account is managed by its automated paper trader.")
+    if automated and account["auto_session_id"] is None:
+        raise CustomerDataError("Automated paper session is not active.")
+    if automated and (not account["enabled"] or account["auto_status"] != "running"):
+        raise CustomerDataError("This automated paper trader is paused.")
     now = utcnow()
     position = conn.execute(
         "SELECT id,quantity,average_entry_price FROM customer_paper_positions WHERE paper_account_id=? AND asset_id=?",
@@ -206,14 +220,115 @@ def place_paper_trade(
     )
     cursor = conn.execute(
         """INSERT INTO customer_paper_trades
-           (paper_account_id,asset_id,token_name,side,quantity,price_usd,amount_usd,realized_pnl_usd,reason,created_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+           (paper_account_id,asset_id,token_name,side,quantity,price_usd,amount_usd,realized_pnl_usd,reason,paper_session_id,created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?) RETURNING id""",
         (paper_account_id, asset_id.strip(), token_name, side, quantity, float(price_usd),
-         float(amount_usd), realized, reason.strip(), now),
+         float(amount_usd), realized, reason.strip(), account["auto_session_id"], now),
     )
+    trade_id = cursor.fetchone()["id"]
     conn.commit()
     return {
-        "trade_id": cursor.lastrowid, "side": side, "asset_id": asset_id.strip(),
+        "trade_id": trade_id, "side": side, "asset_id": asset_id.strip(),
         "quantity": quantity, "price_usd": float(price_usd), "amount_usd": float(amount_usd),
         "realized_pnl_usd": realized, "cash_balance_usd": new_cash,
     }
+
+
+def get_customer_paper_trader(conn, account_id: str) -> dict | None:
+    row = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
+    if row is None or row["auto_status"] == "setup":
+        return None
+    account = dict(row)
+    account["strategy_mode"] = account.get("strategy_profile") or account["strategy_mode"]
+    positions = conn.execute(
+        "SELECT asset_id,token_name,quantity,average_entry_price,last_price,opened_at FROM customer_paper_positions WHERE paper_account_id=? ORDER BY opened_at DESC",
+        (account["id"],),
+    ).fetchall()
+    market_value = sum(float(p["quantity"]) * (float(p["last_price"]) or float(p["average_entry_price"])) for p in positions)
+    equity = float(account["cash_balance_usd"]) + market_value
+    if account["auto_session_id"] is None:
+        realized = conn.execute(
+            "SELECT COALESCE(SUM(realized_pnl_usd),0) FROM customer_paper_trades WHERE paper_account_id=? AND side='sell'",
+            (account["id"],),
+        ).fetchone()[0]
+    else:
+        realized = conn.execute(
+            "SELECT COALESCE(SUM(realized_pnl_usd),0) FROM customer_paper_trades WHERE paper_account_id=? AND side='sell' AND paper_session_id=?",
+            (account["id"], account["auto_session_id"]),
+        ).fetchone()[0]
+    account.update({
+        "equity_usd": round(equity, 2),
+        "profit_usd": round(equity - float(account["starting_capital_usd"]), 2),
+        "target_progress_pct": round(max(0.0, min(100.0, (equity - float(account["starting_capital_usd"])) / float(account["profit_target_usd"]) * 100.0)), 1),
+        "realized_pnl_usd": round(float(realized or 0), 2),
+        "positions": [dict(p) for p in positions],
+        "is_running": bool(account["enabled"]) and account["auto_status"] == "running",
+    })
+    return account
+
+
+def start_customer_paper_trader(conn, account_id: str, starting_capital_usd: float, profit_target_usd: float, mode: str, new_session: bool = False) -> dict:
+    if mode not in {"gradual", "normal", "aggressive", "ultra_aggressive"}:
+        raise CustomerDataError("Choose Gradual, Normal, Aggressive, or Ultra Aggressive mode.")
+    if isinstance(starting_capital_usd, bool) or not isinstance(starting_capital_usd, (int, float)) or not 5 <= float(starting_capital_usd) <= 100000000:
+        raise CustomerDataError("Starting balance must be between $5 and $100,000,000.")
+    if isinstance(profit_target_usd, bool) or not isinstance(profit_target_usd, (int, float)) or not 1 <= float(profit_target_usd) <= 100000000:
+        raise CustomerDataError("Profit target must be between $1 and $100,000,000.")
+    if conn.execute("SELECT id FROM customer_accounts WHERE id=? AND status='active'", (account_id,)).fetchone() is None:
+        raise CustomerDataError("Customer account is not active.")
+    existing = conn.execute("SELECT * FROM customer_paper_accounts WHERE account_id=? ORDER BY created_at LIMIT 1", (account_id,)).fetchone()
+    now = utcnow()
+    session_id = secrets.token_urlsafe(18)
+    stored_mode = "aggressive" if mode == "ultra_aggressive" else mode
+    if existing is None:
+        paper_id = secrets.token_urlsafe(18)
+        conn.execute(
+            """INSERT INTO customer_paper_accounts
+               (id,account_id,name,starting_capital_usd,cash_balance_usd,enabled,strategy_mode,strategy_profile,profit_target_usd,auto_status,auto_session_id,created_at,updated_at)
+               VALUES(?,?,'Automated Paper Trader',?,?,1,?,?,?,'running',?,?,?)""",
+            (paper_id, account_id, float(starting_capital_usd), float(starting_capital_usd), stored_mode, mode, float(profit_target_usd), session_id, now, now),
+        )
+    else:
+        paper_id = existing["id"]
+        if new_session:
+            if existing["auto_status"] == "running":
+                raise CustomerDataError("Pause your paper trader before starting a new session.")
+            # Reset only current account state; prior trades remain in the journal.
+            conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
+            conn.execute(
+                """UPDATE customer_paper_accounts
+                   SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,strategy_profile=?,
+                       profit_target_usd=?,enabled=1,auto_status='running',auto_session_id=?,updated_at=?
+                   WHERE id=? AND account_id=?""",
+                (float(starting_capital_usd), float(starting_capital_usd), stored_mode, mode,
+                 float(profit_target_usd), session_id, now, paper_id, account_id),
+            )
+        elif existing["auto_status"] in {"setup", "target_reached"}:
+            conn.execute("DELETE FROM customer_paper_positions WHERE paper_account_id=?", (paper_id,))
+            conn.execute(
+                """UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=?,strategy_mode=?,strategy_profile=?,
+                   profit_target_usd=?,enabled=1,auto_status='running',auto_session_id=?,updated_at=? WHERE id=? AND account_id=?""",
+                (float(starting_capital_usd), float(starting_capital_usd), stored_mode, mode, float(profit_target_usd), session_id, now, paper_id, account_id),
+            )
+        else:
+            trade_count = conn.execute("SELECT COUNT(*) FROM customer_paper_trades WHERE paper_account_id=?", (paper_id,)).fetchone()[0]
+            has_positions = conn.execute("SELECT 1 FROM customer_paper_positions WHERE paper_account_id=? LIMIT 1", (paper_id,)).fetchone()
+            if not trade_count and not has_positions:
+                conn.execute("UPDATE customer_paper_accounts SET starting_capital_usd=?,cash_balance_usd=? WHERE id=? AND account_id=?",
+                             (float(starting_capital_usd), float(starting_capital_usd), paper_id, account_id))
+            conn.execute(
+                """UPDATE customer_paper_accounts SET strategy_mode=?,strategy_profile=?,profit_target_usd=?,enabled=1,auto_status='running',updated_at=?
+                   WHERE id=? AND account_id=?""",
+                (stored_mode, mode, float(profit_target_usd), now, paper_id, account_id),
+            )
+    conn.commit()
+    return get_customer_paper_trader(conn, account_id)
+
+
+def pause_customer_paper_trader(conn, account_id: str) -> dict | None:
+    conn.execute(
+        "UPDATE customer_paper_accounts SET enabled=0,auto_status='paused',updated_at=? WHERE account_id=? AND auto_status='running'",
+        (utcnow(), account_id),
+    )
+    conn.commit()
+    return get_customer_paper_trader(conn, account_id)

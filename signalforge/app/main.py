@@ -1,11 +1,14 @@
 """SignalForge Core: read-only research backend. No wallet, no signing, no order execution here."""
 import asyncio
+import hashlib
+import secrets
 import json
 import logging
 import os
 import time
 from urllib.parse import urlparse
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from typing import Optional
@@ -18,17 +21,20 @@ from . import store
 from .auth import Principal, RateLimiter, _fp, require_admin, require_read
 from .config import Settings, load_settings
 from .db import connect, run_migrations, utcnow
-from . import customer_auth, customer_data, customer_integrations, customer_email
+from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, telegram_alerts
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed, launch_feed, j7_feed, axiom_watchlist_sync
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
 _price_history = {}
 _bubble_cache = {}
 _launch_cache = {}
+_launch_retry_after = {}
+_callout_market_cache = {}
+_copytop_feed_cache = {"fetched_at": 0.0, "payload": None}
 
 
 class HaltRequest(BaseModel):
@@ -87,6 +93,13 @@ class CustomerPaperAccountRequest(BaseModel):
     name: str = Field(default="Main Paper Account", min_length=1, max_length=80)
 
 
+class CustomerPaperTraderStartRequest(BaseModel):
+    starting_capital_usd: float = Field(ge=5, le=100000000)
+    profit_target_usd: float = Field(ge=1, le=100000000)
+    mode: str = Field(pattern="^(gradual|normal|aggressive|ultra_aggressive)$")
+    new_session: bool = False
+
+
 class CustomerPaperTradeRequest(BaseModel):
     asset_id: str = Field(min_length=1, max_length=128)
     token_name: Optional[str] = Field(default=None, max_length=100)
@@ -103,6 +116,16 @@ class CustomerIntegrationRequest(BaseModel):
 
 class CustomerProviderRequest(BaseModel):
     provider: str = Field(min_length=1, max_length=20)
+
+
+class CustomerFomoSnapshotRequest(BaseModel):
+    snapshot_type: str = Field(pattern="^(spot_swaps|clans_24h|clans_7d|clans_30d|trader_leaderboard|trader_leaderboard_24h|trader_leaderboard_7d|trader_leaderboard_30d|trader_spot_swaps)$")
+    observed_at: Optional[str] = None
+    payload: dict
+
+
+class CustomerFomoPairRequest(BaseModel):
+    pairing_code: str = Field(min_length=8, max_length=100)
 
 
 class RiskScreenRequest(BaseModel):
@@ -123,6 +146,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.paper_bot_task = None
     app.state.helius_sync_stop = asyncio.Event()
     app.state.helius_sync_task = None
+    app.state.j7_feed_stop = asyncio.Event()
+    app.state.j7_feed_task = None
+    app.state.customer_paper_bot_stop = asyncio.Event()
+    app.state.customer_paper_bot_task = None
 
     @app.on_event("startup")
     async def start_paper_bot():
@@ -130,21 +157,43 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             app.state.paper_bot_task = asyncio.create_task(
                 paper_bot.run_paper_bot(settings.db_path, app.state.paper_bot_stop)
             )
+            app.state.customer_paper_bot_task = asyncio.create_task(
+                customer_paper_bot.run_customer_paper_bot(settings.db_path, settings.database_url, app.state.customer_paper_bot_stop)
+            )
+            log.warning("Customer paper trader background task scheduled")
             if os.getenv("HELIUS_API_KEY"):
                 app.state.helius_sync_task = asyncio.create_task(
                     run_helius_sync(settings.db_path, app.state.helius_sync_stop)
+                )
+            j7_jwt = os.getenv("J7TRACKER_JWT", "").strip()
+            if j7_jwt:
+                app.state.j7_feed_task = asyncio.create_task(
+                    j7_feed.run_feed(app.state.j7_feed_stop, j7_jwt)
                 )
 
     @app.on_event("shutdown")
     async def stop_paper_bot():
         app.state.paper_bot_stop.set()
         app.state.helius_sync_stop.set()
+        app.state.customer_paper_bot_stop.set()
+        app.state.j7_feed_stop.set()
+        if app.state.j7_feed_task is not None:
+            try:
+                await asyncio.wait_for(app.state.j7_feed_task, timeout=6)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                app.state.j7_feed_task.cancel()
         helius_task = app.state.helius_sync_task
         if helius_task is not None:
             try:
                 await asyncio.wait_for(helius_task, timeout=25)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 helius_task.cancel()
+        customer_task = app.state.customer_paper_bot_task
+        if customer_task is not None:
+            try:
+                await asyncio.wait_for(customer_task, timeout=8)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                customer_task.cancel()
         task = app.state.paper_bot_task
         if task is not None:
             try:
@@ -153,8 +202,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 task.cancel()
 
     # One shared connection for ":memory:" (tests); a fresh connection per request otherwise.
-    shared = connect(settings.db_path) if settings.db_path == ":memory:" else None
-    boot = shared or connect(settings.db_path)
+    shared = connect(settings.db_path, settings.database_url) if settings.db_path == ":memory:" else None
+    boot = shared or connect(settings.db_path, settings.database_url)
     applied = run_migrations(boot)
     store.log_event(boot, "info", "startup", f"started v{settings.version}; migrations applied: {applied or 'none'}")
     if not (settings.read_api_keys or settings.admin_api_keys):
@@ -166,7 +215,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if shared is not None:
             yield shared
             return
-        conn = connect(settings.db_path)
+        conn = connect(settings.db_path, settings.database_url)
         try:
             yield conn
         finally:
@@ -193,40 +242,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         app.state.customer_auth_limiter.check(action + ":" + host)
 
     @app.post("/v1/customer/register", status_code=201)
-    async def customer_register(body: CustomerRegisterRequest, request: Request, conn=Depends(get_conn)):
-        """Create a pending account and email a one-time verification link."""
+    def customer_register(body: CustomerRegisterRequest, request: Request, response: Response, conn=Depends(get_conn)):
+        """Create an account and sign the customer in immediately; no email delivery is required."""
         customer_rate_limit(request, "register")
         try:
             account_id = customer_auth.register_customer_account(conn, body.email, body.password)
-            token = customer_auth.create_email_verification_token(conn, account_id)
-            await customer_email.send_verification_email(body.email.strip().lower(), token)
+            session = customer_auth.create_customer_session(conn, account_id)
         except customer_auth.CustomerAuthError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        except customer_email.EmailDeliveryError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-        return {"status": "pending_verification", "message": "Account created. Check your inbox and verify your email before signing in."}
-
-    @app.post("/v1/customer/verification/resend")
-    async def customer_resend_verification(body: CustomerActivateRequest, request: Request, conn=Depends(get_conn)):
-        customer_rate_limit(request, "verification")
         email = body.email.strip().lower()
-        row = conn.execute("SELECT id,status FROM customer_accounts WHERE email=? COLLATE NOCASE", (email,)).fetchone()
-        # Generic response prevents account enumeration.
-        if row is not None and row["status"] == "pending":
-            token = customer_auth.create_email_verification_token(conn, row["id"])
-            try:
-                await customer_email.send_verification_email(email, token)
-            except customer_email.EmailDeliveryError as exc:
-                raise HTTPException(status_code=503, detail=str(exc))
-        return {"message": "If the account is awaiting verification, a new link has been sent."}
-
-    @app.get("/v1/customer/verify-email")
-    def customer_verify_email(token: str, conn=Depends(get_conn)):
-        if not customer_auth.consume_email_verification_token(conn, token):
-            raise HTTPException(status_code=400, detail="This verification link is invalid, expired, or already used. Request a new link.")
-        return {"verified": True, "message": "Email verified. You can now sign in to SignalForce."}
+        secure_cookie = os.getenv("SIGNALFORCE_COOKIE_SECURE", "true").lower() != "false"
+        response.set_cookie("sf_customer_session", session["session_token"], httponly=True,
+                            secure=secure_cookie, samesite="strict", max_age=86400, path="/")
+        return {"status": "active", "authenticated": True, "email": email,
+                "csrf_token": session["csrf_token"], "expires_at": session["expires_at"],
+                "message": "Account created. You're signed in to SignalForce."}
 
     @app.post("/v1/customer/login")
     def customer_login(body: CustomerLoginRequest, request: Request, response: Response, conn=Depends(get_conn)):
@@ -268,7 +300,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/v1/admin/customers/activate")
     def activate_customer(body: CustomerActivateRequest, _: Principal = Depends(require_admin), conn=Depends(get_conn)):
-        cursor = conn.execute("UPDATE customer_accounts SET status='active', email_verified_at=?, updated_at=? WHERE email=? COLLATE NOCASE AND status='pending'",
+        cursor = conn.execute("UPDATE customer_accounts SET status='active', email_verified_at=?, updated_at=? WHERE LOWER(email)=LOWER(?) AND status='pending'",
                               (utcnow(), utcnow(), body.email.strip()))
         conn.commit()
         if cursor.rowcount != 1:
@@ -292,6 +324,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if not customer_data.remove_wallet(conn, session["account_id"], wallet_address):
             raise HTTPException(status_code=404, detail="Wallet not found on this account")
         return {"removed": True}
+
+    @app.get("/v1/customer/paper-trader")
+    def customer_paper_trader(session=Depends(require_customer), conn=Depends(get_conn)):
+        return {"paper_trader": customer_data.get_customer_paper_trader(conn, session["account_id"])}
+
+    @app.post("/v1/customer/paper-trader/start")
+    def customer_paper_trader_start(body: CustomerPaperTraderStartRequest,
+                                    session=Depends(require_customer_write), conn=Depends(get_conn)):
+        try:
+            return {"paper_trader": customer_data.start_customer_paper_trader(
+                conn, session["account_id"], body.starting_capital_usd,
+                body.profit_target_usd, body.mode, new_session=body.new_session)}
+        except customer_data.CustomerDataError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.post("/v1/customer/paper-trader/pause")
+    def customer_paper_trader_pause(session=Depends(require_customer_write), conn=Depends(get_conn)):
+        return {"paper_trader": customer_data.pause_customer_paper_trader(conn, session["account_id"])}
 
     @app.get("/v1/customer/paper-accounts")
     def customer_paper_accounts(session=Depends(require_customer), conn=Depends(get_conn)):
@@ -425,14 +475,450 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except customer_integrations.CustomerIntegrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
+    @app.post("/v1/customer/x-callouts/sync-watchlist")
+    async def customer_x_callouts_sync_watchlist(session=Depends(require_customer_write)):
+        """Sync available imported Axiom handles to J7 without consuming paid custom slots."""
+        jwt = os.getenv("J7TRACKER_JWT", "").strip()
+        if not jwt:
+            raise HTTPException(status_code=503, detail="J7Tracker is not configured on this SignalForce deployment.")
+        try:
+            return await axiom_watchlist_sync.sync_available_accounts(jwt)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in (401, 403):
+                raise HTTPException(status_code=502, detail="J7Tracker rejected the configured session. Refresh J7TRACKER_JWT in Render.")
+            raise HTTPException(status_code=502, detail=f"J7Tracker watchlist sync failed (HTTP {status}).")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Could not reach J7Tracker to sync the watchlist.")
+        except (ValueError, RuntimeError):
+            raise HTTPException(status_code=502, detail="J7Tracker returned an unexpected watchlist response.")
+
+    @app.get("/v1/customer/x-callouts")
+    def customer_x_callouts(limit: int = 100, session=Depends(require_customer)):
+        """Return read-only live X posts and J7 launch alerts for this signed-in customer."""
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 200")
+        return j7_feed.snapshot(limit)
+
+    @app.get("/v1/customer/fomo-copilot/provider-feed")
+    async def customer_fomo_provider_feed(session=Depends(require_customer)):
+        """Return cached, public, read-only Copy.top FOMO intelligence for this signed-in customer."""
+        cached = _copytop_feed_cache.get("payload")
+        if cached is not None and time.time() - _copytop_feed_cache["fetched_at"] < 30:
+            return {**cached, "cache_age_seconds": int(time.time() - _copytop_feed_cache["fetched_at"])}
+        payload = await copytop_feed.fetch_feed()
+        _copytop_feed_cache["fetched_at"] = time.time()
+        _copytop_feed_cache["payload"] = payload
+        return {**payload, "cache_age_seconds": 0}
+
+    @app.get("/v1/customer/fomo-copilot")
+    def customer_fomo_copilot(session=Depends(require_customer), conn=Depends(get_conn)):
+        snapshots = fomo_copilot.list_snapshots(conn, session["account_id"])
+        now = utcnow()
+        bridge = conn.execute(
+            "SELECT bridge_expires_at FROM customer_fomo_bridge_pairs WHERE account_id=?",
+            (session["account_id"],),
+        ).fetchone()
+        paired = bool(bridge and bridge["bridge_expires_at"] and bridge["bridge_expires_at"] > now)
+        return {
+            "connected": bool(snapshots),
+            "bridge_paired": paired,
+            "snapshot_count": len(snapshots),
+            "snapshots": snapshots,
+            "mode": "read_only_manual",
+            "execution_enabled": False,
+        }
+
+    async def _customer_callout_data(account_id, conn, limit):
+        snapshots = fomo_copilot.list_snapshots(conn, account_id)
+        trader_activity_snapshot = next(
+            (item for item in snapshots if item["snapshot_type"] == "trader_spot_swaps"),
+            None,
+        )
+        trader_activity_rows = (
+            (trader_activity_snapshot or {}).get("payload", {}).get("traders") or []
+        )
+        fresh_trader_buys = {}
+        now = datetime.now(timezone.utc)
+        for trader in trader_activity_rows:
+            if not isinstance(trader, dict):
+                continue
+            handle = str(trader.get("handle") or "FOMO trader")[:80]
+            for swap in trader.get("swaps") or []:
+                if not isinstance(swap, dict) or swap.get("isCrossmint") or swap.get("isOffPlatform"):
+                    continue
+                display = swap.get("display")
+                side = display.get("side") if isinstance(display, dict) else display
+                if not isinstance(side, str) or side.lower() != "buy":
+                    continue
+                mint = swap.get("outTokenAddress")
+                created_at = swap.get("createdAt")
+                if not fomo_signals.is_solana_mint(mint) or not isinstance(created_at, str):
+                    continue
+                try:
+                    parsed_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    if parsed_at.tzinfo is None:
+                        continue
+                    age_seconds = (now - parsed_at.astimezone(timezone.utc)).total_seconds()
+                except ValueError:
+                    continue
+                if age_seconds < 0 or age_seconds > 300:
+                    continue
+                created_at_utc = parsed_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                activity = fresh_trader_buys.setdefault(mint, {
+                    "buy_count": 0,
+                    "traders": [],
+                    "latest_buy_at": None,
+                    "verification": "fomo_leaderboard_qualified_not_chain_verified",
+                })
+                activity["buy_count"] += 1
+                if handle not in activity["traders"]:
+                    activity["traders"].append(handle)
+                if activity["latest_buy_at"] is None or created_at_utc > activity["latest_buy_at"]:
+                    activity["latest_buy_at"] = created_at_utc
+
+        assets = scan_assets(conn, limit)
+        known_mints = {item.get("asset_id") for item in assets}
+        # Recent buys from strictly qualified FOMO leaderboard accounts become
+        # discovery candidates; the swap feed itself is not treated as chain proof.
+        for mint, activity in fresh_trader_buys.items():
+            if mint not in known_mints:
+                latest_buy = datetime.fromisoformat(
+                    activity["latest_buy_at"].replace("Z", "+00:00")
+                ).astimezone(timezone.utc)
+                assets.append({
+                    "asset_id": mint,
+                    "token_name": "",
+                    "latest_collected_at": latest_buy.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "discovery_source": "recent FOMO-qualified trader buy",
+                })
+                known_mints.add(mint)
+        # Add newly created public Solana pools so discovery does not depend only
+        # on historical wallet observations or FOMO trader activity.
+        launch_data = await research_new_launches()
+        launch_rows = launch_data.get("launches") or []
+        for launch in (launch_rows if not launch_data.get("stale") else []):
+            mint = launch.get("asset_id")
+            if isinstance(mint, str) and mint and mint not in known_mints:
+                assets.append({
+                    "asset_id": mint,
+                    "token_name": launch.get("name") or launch.get("symbol") or mint[:8],
+                    "latest_collected_at": utcnow(),
+                    "discovery_source": "GeckoTerminal new pools",
+                })
+                known_mints.add(mint)
+        mints = [item["asset_id"] for item in assets if isinstance(item.get("asset_id"), str)]
+        cache_key = tuple(sorted(set(mints)))
+        cached_market = _callout_market_cache.get(cache_key)
+        if cached_market and time.time() - cached_market[0] < 30:
+            pairs = cached_market[1]
+        else:
+            pairs = []
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                for offset in range(0, len(mints), 30):
+                    batch = mints[offset:offset + 30]
+                    if not batch:
+                        continue
+                    try:
+                        response = await client.get(
+                            "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch),
+                            headers={"Accept": "application/json"},
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        if isinstance(payload, list):
+                            pairs.extend(payload)
+                    except (httpx.HTTPError, ValueError):
+                        log.warning("Customer callout market-data request failed")
+            _callout_market_cache[cache_key] = (time.time(), pairs)
+            if len(_callout_market_cache) > 64:
+                oldest_key = min(_callout_market_cache, key=lambda key: _callout_market_cache[key][0])
+                _callout_market_cache.pop(oldest_key, None)
+        result = fomo_signals.build_callouts(assets, pairs)
+        result["gecko_terminal_new_pools_seen"] = 0 if launch_data.get("stale") else len(launch_rows)
+        spot = next((item for item in snapshots if item["snapshot_type"] == "spot_swaps"), None)
+        swaps = ((spot or {}).get("payload") or {}).get("swaps") or []
+        own_activity = {}
+        for swap in swaps:
+            if not isinstance(swap, dict):
+                continue
+            side = swap.get("display", {}).get("side") if isinstance(swap.get("display"), dict) else swap.get("display")
+            timestamp = swap.get("createdAt")
+            for field in ("inTokenAddress", "outTokenAddress"):
+                mint = swap.get(field)
+                if not isinstance(mint, str) or not mint:
+                    continue
+                entry = own_activity.setdefault(mint, {"swap_count": 0, "latest_swap_at": None, "sides": []})
+                entry["swap_count"] += 1
+                if isinstance(timestamp, str) and (
+                    entry["latest_swap_at"] is None or timestamp > entry["latest_swap_at"]
+                ):
+                    entry["latest_swap_at"] = timestamp
+                if isinstance(side, str) and side.lower() in {"buy", "sell"} and side.lower() not in entry["sides"]:
+                    entry["sides"].append(side.lower())
+        for item in result["callouts"]:
+            activity = own_activity.get(item["asset_id"])
+            if activity:
+                item["your_fomo_activity"] = activity
+            trader_activity = fresh_trader_buys.get(item["asset_id"])
+            if trader_activity:
+                item["qualified_trader_activity"] = trader_activity
+                item["reasons"].append(
+                    str(trader_activity["buy_count"]) + " recent buy(s) from leaderboard-qualified FOMO trader(s)"
+                )
+        trader_snapshots = [
+            item for item in snapshots
+            if item["snapshot_type"].startswith("trader_leaderboard")
+        ]
+        trader_rows = sum(
+            len(((item.get("payload") or {}).get("traders") or []))
+            for item in trader_snapshots
+        )
+        whale_gate = whale_selection.qualify_traders(trader_snapshots)
+        result["whale_selection"] = whale_gate
+        result["fomo_context"] = {
+            "connected_spot_swap_snapshot": bool(spot),
+            "observed_spot_swaps": len(swaps),
+            "observed_at": (spot or {}).get("observed_at"),
+            "tokens_with_your_activity": len(own_activity),
+            "trader_leaderboard_captured": bool(trader_snapshots),
+            "trader_leaderboard_rows": trader_rows,
+            "trader_leaderboard_windows": sorted(
+                item["snapshot_type"].removeprefix("trader_leaderboard_")
+                for item in trader_snapshots
+            ),
+            "leaderboard_qualified_traders": whale_gate["qualified_count"],
+            "qualified_trader_swap_snapshot": bool(trader_activity_snapshot),
+            "qualified_trader_swap_rows": len(trader_activity_rows),
+            "fresh_qualified_trader_buys": sum(item["buy_count"] for item in fresh_trader_buys.values()),
+            "interpretation": "Your imported swaps are personal account history. Recent buys are from FOMO leaderboard-qualified accounts, but are not independently chain-verified and are not guaranteed to be profitable.",
+        }
+        return result
+
+    @app.get("/v1/customer/fomo-copilot/callouts")
+    async def customer_fomo_callouts(
+        limit: int = 100,
+        session=Depends(require_customer),
+        conn=Depends(get_conn),
+    ):
+        """Generate an expanded manual-review watchlist without weakening risk filters."""
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 100")
+        return await _customer_callout_data(session["account_id"], conn, limit)
+
+    @app.post("/v1/customer/fomo-copilot/callouts/telegram")
+    async def customer_fomo_callouts_telegram(
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        """Send the user-requested top callouts to their own connected Telegram bot."""
+        credentials = customer_integrations.load_customer_integration(
+            conn, session["account_id"], "telegram"
+        )
+        if not credentials or not credentials.get("bot_token") or not credentials.get("chat_id"):
+            raise HTTPException(status_code=404, detail="Connect and test your own Telegram bot first.")
+        integration_status = customer_integrations.get_customer_integration_status(
+            conn, session["account_id"], "telegram"
+        )
+        if integration_status.get("status") != "connected":
+            raise HTTPException(status_code=409, detail="Test your Telegram connection before sending callouts.")
+        data = await _customer_callout_data(session["account_id"], conn, 50)
+        rows = data["callouts"][:5]
+        if not rows:
+            raise HTTPException(status_code=409, detail="No candidates passed the current scan filters.")
+        lines = ["SignalForce · Manual Solana watchlist", "Research only · no orders placed"]
+        for item in rows:
+            lines.extend([
+                "",
+                "%s ($%s) · %s/100" % (
+                    item["name"], item["symbol"] or "—", item["score"]
+                ),
+                "Price: $%s · Liquidity: $%s · 1h volume: $%s" % (
+                    item["price_usd"], round(item["liquidity_usd"]), round(item["volume_1h_usd"])
+                ),
+                "5m buys/sells: %s/%s" % (item["buys_5m"], item["sells_5m"]),
+                item["market_url"],
+                "FOMO-qualified trader buys: " + (
+                    ", ".join(item.get("qualified_trader_activity", {}).get("traders", []))
+                    if item.get("qualified_trader_activity") else "none observed"
+                ),
+                "Token: " + item["asset_id"],
+            ])
+        lines.append("\nNo entry/stop/target is supplied. Verify token safety and slippage yourself.")
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    "https://api.telegram.org/bot" + credentials["bot_token"] + "/sendMessage",
+                    json={"chat_id": credentials["chat_id"], "text": "\n".join(lines)[:3900]},
+                )
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                if not response.is_success or not payload.get("ok"):
+                    raise HTTPException(status_code=502, detail="Telegram did not accept the callout message.")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Telegram could not be reached.")
+        return {"sent": True, "count": len(rows), "destination": "your connected Telegram"}
+ 
+    @app.post("/v1/customer/fomo-copilot/pairing")
+    def customer_fomo_copilot_pairing(session=Depends(require_customer_write), conn=Depends(get_conn)):
+        pairing_code = secrets.token_urlsafe(12)
+        now = utcnow()
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            "INSERT INTO customer_fomo_bridge_pairs "
+            "(account_id, pairing_hash, pairing_expires_at, bridge_hash, bridge_expires_at, updated_at) "
+            "VALUES (?, ?, ?, NULL, NULL, ?) "
+            "ON CONFLICT(account_id) DO UPDATE SET pairing_hash=excluded.pairing_hash, "
+            "pairing_expires_at=excluded.pairing_expires_at, bridge_hash=NULL, "
+            "bridge_expires_at=NULL, updated_at=excluded.updated_at",
+            (session["account_id"], hashlib.sha256(pairing_code.encode()).hexdigest(), expires, now),
+        )
+        conn.commit()
+        return {"pairing_code": pairing_code, "expires_at": expires, "expires_in_seconds": 300}
+
+    @app.post("/v1/customer/fomo-copilot/pair")
+    def customer_fomo_copilot_pair(body: CustomerFomoPairRequest, conn=Depends(get_conn)):
+        now = utcnow()
+        supplied_hash = hashlib.sha256(body.pairing_code.encode()).hexdigest()
+        matched = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE pairing_hash=? AND pairing_expires_at>?",
+            (supplied_hash, now),
+        ).fetchone()
+        if not matched:
+            raise HTTPException(status_code=401, detail="Pairing code is invalid or expired. Generate a new code in SignalForce.")
+        bridge_key = secrets.token_urlsafe(32)
+        expires = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            "UPDATE customer_fomo_bridge_pairs SET pairing_hash='', pairing_expires_at=?, "
+            "bridge_hash=?, bridge_expires_at=?, updated_at=? WHERE account_id=?",
+            (now, hashlib.sha256(bridge_key.encode()).hexdigest(), expires, now, matched["account_id"]),
+        )
+        conn.commit()
+        return {"bridge_key": bridge_key, "expires_at": expires}
+
+    @app.post("/v1/customer/fomo-copilot/snapshot")
+    def customer_fomo_copilot_snapshot(
+        body: CustomerFomoSnapshotRequest,
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        try:
+            encoded = fomo_copilot.validate_snapshot(body.snapshot_type, body.payload)
+            observed_at = fomo_copilot.parse_observed_at(body.observed_at)
+        except fomo_copilot.FomoSnapshotError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        now = utcnow()
+        conn.execute(
+            "INSERT INTO customer_fomo_snapshots "
+            "(account_id, snapshot_type, payload_json, source, observed_at, created_at) "
+            "VALUES (?, ?, ?, 'fomo-browser-bridge', ?, ?) "
+            "ON CONFLICT(account_id, snapshot_type) DO UPDATE SET "
+            "payload_json=excluded.payload_json, source=excluded.source, "
+            "observed_at=excluded.observed_at, created_at=excluded.created_at",
+            (session["account_id"], body.snapshot_type, encoded, observed_at, now),
+        )
+        conn.commit()
+        return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
+
+    @app.get("/v1/customer/fomo-copilot/bridge-targets")
+    def customer_fomo_copilot_bridge_targets(
+        request: Request,
+        conn=Depends(get_conn),
+    ):
+        """Return only strictly qualified trader IDs to the paired read-only bridge."""
+        bridge_key = request.headers.get("X-Fomo-Bridge-Key", "")
+        if not bridge_key:
+            raise HTTPException(status_code=401, detail="Local bridge key required")
+        supplied_hash = hashlib.sha256(bridge_key.encode()).hexdigest()
+        row = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE bridge_hash=? AND bridge_expires_at>?",
+            (supplied_hash, utcnow()),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Local bridge key is invalid or expired")
+        snapshots = fomo_copilot.list_snapshots(conn, row["account_id"])
+        qualified = whale_selection.qualify_traders(snapshots)["qualified_traders"]
+        return {
+            "qualified_traders": [
+                {
+                    "user_id": trader["user_id"],
+                    "handle": trader["handle"],
+                    "rank_score": trader["rank_score"],
+                }
+                for trader in qualified[:25]
+            ],
+            "count": min(len(qualified), 25),
+            "mode": "read_only",
+            "note": "Only leaderboard-qualified FOMO user IDs are returned. No trade execution is available.",
+        }
+
+    @app.post("/v1/customer/fomo-copilot/bridge-snapshot")
+    def customer_fomo_copilot_bridge_snapshot(
+        body: CustomerFomoSnapshotRequest,
+        request: Request,
+        conn=Depends(get_conn),
+    ):
+        bridge_key = request.headers.get("X-Fomo-Bridge-Key", "")
+        if not bridge_key:
+            raise HTTPException(status_code=401, detail="Local bridge key required")
+        supplied_hash = hashlib.sha256(bridge_key.encode()).hexdigest()
+        row = conn.execute(
+            "SELECT account_id FROM customer_fomo_bridge_pairs "
+            "WHERE bridge_hash=? AND bridge_expires_at>?",
+            (supplied_hash, utcnow()),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Local bridge key is invalid or expired")
+        try:
+            encoded = fomo_copilot.validate_snapshot(body.snapshot_type, body.payload)
+            observed_at = fomo_copilot.parse_observed_at(body.observed_at)
+        except fomo_copilot.FomoSnapshotError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        now = utcnow()
+        conn.execute(
+            "INSERT INTO customer_fomo_snapshots "
+            "(account_id, snapshot_type, payload_json, source, observed_at, created_at) "
+            "VALUES (?, ?, ?, 'fomo-local-bridge', ?, ?) "
+            "ON CONFLICT(account_id, snapshot_type) DO UPDATE SET "
+            "payload_json=excluded.payload_json, source=excluded.source, "
+            "observed_at=excluded.observed_at, created_at=excluded.created_at",
+            (row["account_id"], body.snapshot_type, encoded, observed_at, now),
+        )
+        conn.commit()
+        return {"saved": True, "snapshot_type": body.snapshot_type, "observed_at": observed_at}
+
+    @app.delete("/v1/customer/fomo-copilot")
+    def customer_fomo_copilot_disconnect(
+        session=Depends(require_customer_write),
+        conn=Depends(get_conn),
+    ):
+        conn.execute("DELETE FROM customer_fomo_snapshots WHERE account_id=?", (session["account_id"],))
+        conn.execute("DELETE FROM customer_fomo_bridge_pairs WHERE account_id=?", (session["account_id"],))
+        conn.commit()
+        return {"disconnected": True}
+
     @app.get("/account", include_in_schema=False)
     def customer_workspace():
         """Serve the separate customer account and paper-trading workspace."""
         return FileResponse(Path(__file__).parent / "static" / "customer.html")
 
+    @app.get("/terminal", include_in_schema=False)
+    def public_terminal():
+        """Serve the customer-facing paper-trading terminal without operator API keys."""
+        return FileResponse(Path(__file__).parent / "static" / "customer.html")
+
+    @app.get("/operator", include_in_schema=False)
+    def operator_terminal():
+        """Serve the legacy operator research terminal; its APIs remain read-key gated."""
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
+
     @app.get("/", include_in_schema=False)
     def customer_home():
-        """Public product entry point; operator controls are not served to customers."""
+        """Public customer sign-in and paper-trading entry point."""
         return FileResponse(Path(__file__).parent / "static" / "customer.html")
 
     @app.get("/health")
@@ -757,73 +1243,157 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/v1/research/new-launches")
     async def research_new_launches():
-        """Return the newest Solana pools and token artwork from public GeckoTerminal data."""
+        """Return fresh Solana pools, falling back to DexScreener token profiles."""
         now = time.time()
         cached = _launch_cache.get("solana")
         if cached and now - cached[0] < 45:
             return cached[1]
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.get(
-                    "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
-                    params={"include": "base_token,quote_token,dex", "page": 1},
-                    headers={"Accept": "application/json"},
-                )
-                response.raise_for_status()
-                payload = response.json()
-            included = {
-                item.get("id"): item.get("attributes") or {}
-                for item in (payload.get("included") or [])
-                if isinstance(item, dict) and item.get("type") == "token"
-            }
-            launches = []
-            for pool in payload.get("data") or []:
-                if not isinstance(pool, dict):
-                    continue
-                attrs = pool.get("attributes") or {}
-                relationships = pool.get("relationships") or {}
-                base_ref = ((relationships.get("base_token") or {}).get("data") or {})
-                quote_ref = ((relationships.get("quote_token") or {}).get("data") or {})
-                base_token = included.get(base_ref.get("id"), {})
-                quote_token = included.get(quote_ref.get("id"), {})
+
+        gecko_error = None
+        if now >= _launch_retry_after.get("solana", 0):
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    response = await client.get(
+                        "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
+                        params={"include": "base_token,quote_token,dex", "page": 1},
+                        headers={"Accept": "application/json"},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                included = {
+                    item.get("id"): item.get("attributes") or {}
+                    for item in (payload.get("included") or [])
+                    if isinstance(item, dict) and item.get("type") == "token"
+                }
+                launches = []
                 quote_like_addresses = {
                     "So11111111111111111111111111111111111111112",
                     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
                 }
-                token = quote_token if base_token.get("address") in quote_like_addresses else base_token
-                address = token.get("address")
-                if not isinstance(address, str) or not address:
-                    continue
-                image = token.get("image_url")
-                if not isinstance(image, str) or not image.startswith("https://"):
-                    image = None
-                dex_ref = ((relationships.get("dex") or {}).get("data") or {})
-                pool_id = pool.get("id") or ""
-                launches.append({
-                    "asset_id": address,
-                    "name": token.get("name") or address[:8],
-                    "symbol": token.get("symbol") or "",
-                    "image_url": image,
-                    "pool_address": pool_id.split("_", 1)[-1],
-                    "pool_created_at": attrs.get("pool_created_at"),
-                    "price_usd": attrs.get("base_token_price_usd"),
-                    "liquidity_usd": attrs.get("reserve_in_usd"),
-                    "volume_24h_usd": (attrs.get("volume_usd") or {}).get("h24"),
-                    "dex": dex_ref.get("id"),
-                    "source": "GeckoTerminal",
-                })
-            result = {
-                "launches": launches[:10],
-                "count": len(launches[:10]),
-                "source": "GeckoTerminal public Solana new-pools feed",
-                "note": "New pool creation is a discovery signal, not proof of a legitimate launch or a safe token. Artwork is provider-supplied and may be unavailable.",
-            }
-            _launch_cache["solana"] = (now, result)
-            return result
-        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-            log.warning("GeckoTerminal new-pools feed unavailable")
-            raise HTTPException(status_code=502, detail="GeckoTerminal's Solana new-pools feed is temporarily unavailable")
+                for pool in payload.get("data") or []:
+                    if not isinstance(pool, dict):
+                        continue
+                    attrs = pool.get("attributes") or {}
+                    relationships = pool.get("relationships") or {}
+                    base_ref = ((relationships.get("base_token") or {}).get("data") or {})
+                    quote_ref = ((relationships.get("quote_token") or {}).get("data") or {})
+                    base_token = included.get(base_ref.get("id"), {})
+                    quote_token = included.get(quote_ref.get("id"), {})
+                    token = quote_token if base_token.get("address") in quote_like_addresses else base_token
+                    address = token.get("address")
+                    if not isinstance(address, str) or not address:
+                        continue
+                    image = token.get("image_url")
+                    if not isinstance(image, str) or not image.startswith("https://"):
+                        image = None
+                    dex_ref = ((relationships.get("dex") or {}).get("data") or {})
+                    pool_id = pool.get("id") or ""
+                    launches.append({
+                        "asset_id": address,
+                        "name": token.get("name") or address[:8],
+                        "symbol": token.get("symbol") or "",
+                        "image_url": image,
+                        "pool_address": pool_id.split("_", 1)[-1],
+                        "pool_created_at": attrs.get("pool_created_at"),
+                        "price_usd": attrs.get("base_token_price_usd"),
+                        "liquidity_usd": attrs.get("reserve_in_usd"),
+                        "volume_24h_usd": (attrs.get("volume_usd") or {}).get("h24"),
+                        "dex": dex_ref.get("id"),
+                        "source": "GeckoTerminal",
+                    })
+                if launches:
+                    result = {
+                        "launches": launches[:10],
+                        "count": len(launches[:10]),
+                        "source": "GeckoTerminal public Solana new-pools feed",
+                        "stale": False,
+                        "note": "Newest pools first. New pool creation is not proof of legitimacy or safety.",
+                    }
+                    _launch_cache["solana"] = (now, result)
+                    _launch_retry_after["solana"] = 0
+                    return result
+                gecko_error = "GeckoTerminal returned no new pools"
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                retry_after = 300 if status == 429 else 90 if status >= 500 else 180
+                _launch_retry_after["solana"] = now + retry_after
+                gecko_error = "GeckoTerminal HTTP " + str(status)
+                log.warning(
+                    "GeckoTerminal new-pools feed unavailable (HTTP %s); retrying in %ss",
+                    status, retry_after,
+                )
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+                _launch_retry_after["solana"] = now + 120
+                gecko_error = "GeckoTerminal " + type(exc).__name__
+                log.warning(
+                    "GeckoTerminal new-pools feed unavailable (%s); retrying in 120s",
+                    type(exc).__name__,
+                )
+        else:
+            gecko_error = "GeckoTerminal is cooling down after a rate limit or provider error"
+
+        # DexScreener is a secondary discovery source. Its latest token-profile
+        # list can include promoted or older tokens, so the UI labels it clearly.
+        if now >= _launch_retry_after.get("solana_dex", 0):
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    profile_response = await client.get(
+                        "https://api.dexscreener.com/token-profiles/latest/v1",
+                        headers={"Accept": "application/json"},
+                    )
+                    profile_response.raise_for_status()
+                    profiles = profile_response.json()
+                    if not isinstance(profiles, list):
+                        raise ValueError("DexScreener profile response was not a list")
+                    addresses = [
+                        item.get("tokenAddress")
+                        for item in profiles
+                        if isinstance(item, dict)
+                        and str(item.get("chainId") or "").lower() == "solana"
+                        and isinstance(item.get("tokenAddress"), str)
+                    ][:60]
+                    pairs = []
+                    if addresses:
+                        pair_response = await client.get(
+                            "https://api.dexscreener.com/tokens/v1/solana/"
+                            + ",".join(addresses),
+                            headers={"Accept": "application/json"},
+                        )
+                        pair_response.raise_for_status()
+                        pair_payload = pair_response.json()
+                        if isinstance(pair_payload, list):
+                            pairs = pair_payload
+                launches = launch_feed.normalize_dexscreener_latest(profiles, pairs, limit=30)
+                if launches:
+                    result = {
+                        "launches": launches,
+                        "count": len(launches),
+                        "source": "DexScreener latest token profiles (fallback; not necessarily brand-new pools)",
+                        "stale": False,
+                        "note": "GeckoTerminal is unavailable. This backup feed shows recently listed or promoted Solana tokens and may include older pools; verify pool age and token details.",
+                    }
+                    _launch_cache["solana"] = (now, result)
+                    _launch_retry_after["solana_dex"] = 0
+                    return result
+                raise ValueError("DexScreener returned no Solana token profiles")
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+                _launch_retry_after["solana_dex"] = now + 90
+                log.warning("DexScreener latest-token fallback unavailable (%s)", type(exc).__name__)
+
+        if cached:
+            stale = dict(cached[1])
+            stale["stale"] = True
+            stale["note"] = "Showing the last successful launch list while public feeds recover."
+            return stale
+        return {
+            "launches": [],
+            "count": 0,
+            "source": "public feeds temporarily unavailable",
+            "stale": True,
+            "note": "GeckoTerminal and the DexScreener backup are temporarily unavailable. The feed will retry automatically.",
+            "provider_status": gecko_error or "unavailable",
+        }
 
     @app.get("/v1/research/trending-now")
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
@@ -1066,7 +1636,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         address = body.wallet_address.strip()
         if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address):
             raise HTTPException(status_code=422, detail="Enter a valid-looking Solana public wallet address")
-        conn.execute("INSERT OR IGNORE INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+        conn.execute("INSERT INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                      (address, body.label or address[:6]+"…"+address[-4:], utcnow()))
         conn.commit()
         return {"added": True, "wallet_address": address, "label": body.label or address[:6]+"…"+address[-4:]}
@@ -1091,7 +1661,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 continue
             seen.add(address)
             cursor = conn.execute(
-                "INSERT OR IGNORE INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?)",
+                "INSERT INTO tracked_wallets(wallet_address,label,added_at) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                 (address, address[:6] + "…" + address[-4:], utcnow()),
             )
             if cursor.rowcount:
@@ -1162,13 +1732,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="minimum_wallets must be between 2 and 50")
         if limit < 1 or limit > 200:
             raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = conn.execute(
             "SELECT wallet_address, signature, mint, token_name, token_symbol, side, "
             "price_usd, market_cap_usd, occurred_at, source "
             "FROM wallet_trade_events WHERE side='buy' "
-            "AND occurred_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now', ?) "
+            "AND occurred_at >= ? "
             "ORDER BY occurred_at DESC LIMIT 10000",
-            (f"-{hours_back} hours",),
+            (cutoff,),
         ).fetchall()
         overlaps = find_wallet_overlap([dict(row) for row in rows], minimum_wallets)
         return {

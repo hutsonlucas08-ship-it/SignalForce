@@ -10,7 +10,7 @@ import uuid
 
 import httpx
 
-from . import exit_rules, paper, position_track
+from . import exit_rules, launch_feed, paper, position_track
 from .db import connect, utcnow
 from .research import scan_assets
 
@@ -20,7 +20,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 OWNER = str(uuid.uuid4())
 _BUBBLE_CACHE = {}
 _GECKO_LAUNCH_CACHE = (0.0, [])
+_GECKO_RETRY_AFTER = 0.0
+_DEX_PROFILE_CACHE = (0.0, [])
+_DEX_PROFILE_RETRY_AFTER = 0.0
 _STALE_ALERTED = {}
+_TELEGRAM_CONFIG_WARNING_LOGGED = False
 INTERVAL_SECONDS = 30.0
 SMART_MONEY_LOOKBACK_MINUTES = 15
 MIN_DISTINCT_WALLET_BUYS = 1
@@ -40,7 +44,7 @@ EXIT_CONFIG = exit_rules.ExitConfig(stop_loss_pct=STOP_LOSS_PCT)
 
 
 def _state(conn):
-    conn.execute("INSERT OR IGNORE INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,0,1000)")
+    conn.execute("INSERT INTO paper_bot_state(id,enabled,allocated_capital_usd) VALUES(1,0,1000) ON CONFLICT DO NOTHING")
     conn.commit()
     state = dict(conn.execute("SELECT * FROM paper_bot_state WHERE id=1").fetchone())
     paper.ensure_accounts(conn)
@@ -183,11 +187,17 @@ async def _fetch_pairs(client, mints):
 
 
 async def _fetch_gecko_new_launches(client):
-    """Fetch/cache GeckoTerminal's newest Solana pools as extra bot candidates."""
-    global _GECKO_LAUNCH_CACHE
+    """Fetch/cache GeckoTerminal new pools; back off on provider failures.
+
+    New-pool discovery is supplemental: tracked-wallet and indexed-market
+    candidates continue to run if GeckoTerminal is unavailable.
+    """
+    global _GECKO_LAUNCH_CACHE, _GECKO_RETRY_AFTER
     now = time.time()
     cached_at, cached = _GECKO_LAUNCH_CACHE
     if now - cached_at < 45:
+        return list(cached)
+    if now < _GECKO_RETRY_AFTER:
         return list(cached)
     try:
         response = await client.get(
@@ -226,11 +236,74 @@ async def _fetch_gecko_new_launches(client):
             unique.setdefault(item["asset_id"], item)
         result = list(unique.values())[:30]
         _GECKO_LAUNCH_CACHE = (now, result)
+        _GECKO_RETRY_AFTER = 0.0
         return list(result)
-    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-        log.warning("Paper bot GeckoTerminal discovery request failed")
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        retry_after = 300 if status == 429 else 90 if status >= 500 else 300
+        _GECKO_RETRY_AFTER = now + retry_after
+        log.warning("Paper bot GeckoTerminal discovery unavailable (HTTP %s); retrying in %ss; using cached/other sources",
+                    status, retry_after)
+        return list(cached)
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        _GECKO_RETRY_AFTER = now + 120
+        log.warning("Paper bot GeckoTerminal discovery unavailable (%s); retrying in 120s; using cached/other sources",
+                    type(exc).__name__)
         return list(cached)
 
+
+
+async def _fetch_dexscreener_profile_launches(client):
+    """Fallback discovery for the paper scanners when GeckoTerminal is rate-limited."""
+    global _DEX_PROFILE_CACHE, _DEX_PROFILE_RETRY_AFTER
+    now = time.time()
+    cached_at, cached = _DEX_PROFILE_CACHE
+    if now - cached_at < 60:
+        return list(cached)
+    if now < _DEX_PROFILE_RETRY_AFTER:
+        return list(cached)
+    try:
+        response = await client.get(
+            "https://api.dexscreener.com/token-profiles/latest/v1",
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        profiles = response.json()
+        if not isinstance(profiles, list):
+            raise ValueError("DexScreener profile response was not a list")
+        addresses = list(dict.fromkeys(
+            item.get("tokenAddress") for item in profiles
+            if isinstance(item, dict)
+            and str(item.get("chainId") or "").lower() == "solana"
+            and isinstance(item.get("tokenAddress"), str)
+        ))[:60]
+        pairs = []
+        if addresses:
+            pair_response = await client.get(
+                "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(addresses),
+                headers={"Accept": "application/json"},
+            )
+            pair_response.raise_for_status()
+            pair_payload = pair_response.json()
+            if isinstance(pair_payload, list):
+                pairs = pair_payload
+        normalized = launch_feed.normalize_dexscreener_latest(profiles, pairs, limit=30)
+        result = [{"asset_id": item["asset_id"], "token_name": item.get("name") or item.get("symbol") or item["asset_id"][:8]}
+                  for item in normalized if item.get("asset_id")]
+        _DEX_PROFILE_CACHE = (now, result)
+        _DEX_PROFILE_RETRY_AFTER = 0.0
+        if result:
+            log.info("Paper bot DexScreener fallback discovered %d Solana candidates", len(result))
+        return list(result)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        _DEX_PROFILE_RETRY_AFTER = now + (300 if status == 429 else 90)
+        log.warning("Paper bot DexScreener fallback unavailable (HTTP %s); using cached/other sources", status)
+        return list(cached)
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        _DEX_PROFILE_RETRY_AFTER = now + 90
+        log.warning("Paper bot DexScreener fallback unavailable (%s); using cached/other sources", type(exc).__name__)
+        return list(cached)
 
 def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUTES):
     """Aggregate recent, ingested buys from active tracked wallets only."""
@@ -239,6 +312,7 @@ def _recent_wallet_buy_signals(conn, lookback_minutes=SMART_MONEY_LOOKBACK_MINUT
         """
         SELECT e.mint, COUNT(*) AS buy_count,
                COUNT(DISTINCT e.wallet_address) AS wallet_count,
+               COALESCE(SUM(COALESCE(e.usd_amount,0)),0) AS buy_usd,
                MAX(e.occurred_at) AS latest_buy_at
         FROM wallet_trade_events e
         JOIN tracked_wallets w ON w.wallet_address=e.wallet_address
@@ -433,20 +507,29 @@ async def _approved_candidates(client, pairs, eligible_mints=None):
 
 
 async def _telegram_send(client, text):
+    global _TELEGRAM_CONFIG_WARNING_LOGGED
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
+        if not _TELEGRAM_CONFIG_WARNING_LOGGED:
+            log.warning("Telegram paper alerts are disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set in Render.")
+            _TELEGRAM_CONFIG_WARNING_LOGGED = True
         return
     try:
         response = await client.post(
             "https://api.telegram.org/bot" + token + "/sendMessage",
             json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
         )
-        response.raise_for_status()
-        if not response.json().get("ok"):
-            log.warning("Telegram paper alert was not accepted")
-    except (httpx.HTTPError, ValueError):
-        log.warning("Telegram paper alert delivery failed")
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        if not response.is_success or not payload.get("ok"):
+            description = payload.get("description") if isinstance(payload, dict) else None
+            log.warning("Telegram paper alert rejected (HTTP %s): %s", response.status_code, str(description or "no provider detail")[:180])
+    except httpx.HTTPError as exc:
+        # Do not log the request URL: Telegram embeds the bot token in that URL.
+        log.warning("Telegram paper alert delivery failed (%s)", type(exc).__name__)
 
 
 async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
@@ -454,6 +537,12 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
     conn = connect(db_path)
     try:
         _state(conn)
+        global _TELEGRAM_CONFIG_WARNING_LOGGED
+        if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+            log.info("Telegram paper alerts are configured.")
+        else:
+            log.warning("Telegram paper alerts are disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set in Render.")
+            _TELEGRAM_CONFIG_WARNING_LOGGED = True
         _set_status(conn, started_at=utcnow())
         async with httpx.AsyncClient(timeout=8.0, headers={"Accept":"application/json"}) as client:
             while not stop_event.is_set():
@@ -471,6 +560,8 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
                     try:
                         assets = scan_assets(conn, 100)
                         gecko_launches = await _fetch_gecko_new_launches(client)
+                        if not gecko_launches:
+                            gecko_launches = await _fetch_dexscreener_profile_launches(client)
                         wallet_signals = _recent_wallet_buy_signals(conn)
                         # Always reserve room for open positions so they continue to be re-priced.
                         held = _held_mints(conn)

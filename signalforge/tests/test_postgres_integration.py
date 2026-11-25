@@ -1,0 +1,434 @@
+"""Real PostgreSQL smoke tests. CI supplies SIGNALFORGE_TEST_DATABASE_URL."""
+import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+import sqlite3
+import uuid
+
+import psycopg
+from psycopg import sql
+
+import pytest
+
+from app.config import Settings
+from app import customer_email
+from app.customer_auth import (
+    CustomerAuthError, authenticate_customer_session, consume_email_verification_token,
+    create_customer_session, create_email_verification_token, register_customer_account,
+)
+from app.customer_data import (
+    CustomerDataError, add_wallet, create_paper_account, list_paper_positions,
+    list_paper_trades, list_wallets, place_paper_trade,
+)
+from app.customer_integrations import (
+    get_customer_integration_status, load_customer_integration, save_customer_integration,
+)
+from cryptography.fernet import Fernet
+from app.db import PostgresConnection, connect, run_migrations, utcnow
+from scripts.migrate_sqlite_to_postgres import (
+    clear_migration_seed_rows, copy_data, source_inventory,
+)
+from app.main import create_app
+from fastapi.testclient import TestClient
+
+
+DATABASE_URL = os.getenv("SIGNALFORGE_TEST_DATABASE_URL")
+pytestmark = pytest.mark.skipif(
+    not DATABASE_URL,
+    reason="Set SIGNALFORGE_TEST_DATABASE_URL to run PostgreSQL integration tests",
+)
+
+
+@pytest.fixture(scope="module")
+def postgres_connection():
+    conn = connect(":memory:", DATABASE_URL)
+    run_migrations(conn)
+    yield conn
+    conn.close()
+
+
+def test_all_schema_migrations_apply_to_postgres(postgres_connection):
+    rows = postgres_connection.execute(
+        "SELECT name FROM schema_migrations ORDER BY name"
+    ).fetchall()
+    assert len(rows) >= 16
+    assert rows[0]["name"] == "001_init.sql"
+
+
+def test_postgres_enforces_case_insensitive_customer_email_uniqueness(postgres_connection):
+    conn = postgres_connection
+    suffix = uuid.uuid4().hex
+    account_id = "pg-" + suffix
+    email = suffix + "@example.test"
+    now = utcnow()
+    conn.execute(
+        "INSERT INTO customer_accounts(id,email,password_hash,created_at,updated_at) "
+        "VALUES(?,?,?,?,?)",
+        (account_id, email, "integration-test-hash", now, now),
+    )
+    conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO customer_accounts(id,email,password_hash,created_at,updated_at) "
+            "VALUES(?,?,?,?,?)",
+            ("pg-duplicate-" + suffix, email.upper(), "another-test-hash", now, now),
+        )
+    conn.rollback()
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM customer_accounts WHERE id=?", (account_id,)
+    ).fetchone()[0]
+    assert count == 1
+
+
+def test_postgres_returning_and_conflict_handling(postgres_connection):
+    conn = postgres_connection
+    suffix = uuid.uuid4().hex
+    account_id = "pg-wallet-" + suffix
+    now = utcnow()
+    conn.execute(
+        "INSERT INTO customer_accounts(id,email,password_hash,created_at,updated_at) "
+        "VALUES(?,?,?,?,?)",
+        (account_id, suffix + "@wallet.test", "integration-test-hash", now, now),
+    )
+    conn.commit()
+
+    address = "11111111111111111111111111111111"
+    first = conn.execute(
+        "INSERT INTO customer_tracked_wallets(account_id,wallet_address,created_at,updated_at) "
+        "VALUES(?,?,?,?) RETURNING id",
+        (account_id, address, now, now),
+    )
+    row = first.fetchone()
+    assert row["id"] == row[0]
+    conn.commit()
+
+    duplicate = conn.execute(
+        "INSERT INTO customer_tracked_wallets(account_id,wallet_address,created_at,updated_at) "
+        "VALUES(?,?,?,?) ON CONFLICT DO NOTHING",
+        (account_id, address, now, now),
+    )
+    assert duplicate.rowcount == 0
+    conn.commit()
+
+
+def test_postgres_paper_bot_lease_query_is_transactionally_locked(postgres_connection):
+    conn = postgres_connection
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        "SELECT lock_owner,lock_until_epoch FROM paper_bot_state WHERE id=1"
+    ).fetchone()
+    assert row is not None
+    conn.commit()
+
+
+
+def test_fastapi_application_starts_and_serves_health_on_postgres(postgres_connection):
+    settings = Settings(
+        db_path=":memory:",
+        read_api_keys=frozenset(),
+        admin_api_keys=frozenset(),
+        database_url=DATABASE_URL,
+    )
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/health")
+    assert response.status_code == 200
+
+
+
+def test_postgres_customer_registration_verification_and_session_lifecycle(postgres_connection):
+    conn = postgres_connection
+    email = uuid.uuid4().hex + "@customer.test"
+    account_id = register_customer_account(conn, email.upper(), "correct horse battery staple")
+    account = conn.execute("SELECT status FROM customer_accounts WHERE id=?", (account_id,)).fetchone()
+    assert account["status"] == "active"
+
+    # Registration is immediately usable; email delivery/verification is not required.
+    created = create_customer_session(conn, account_id)
+    session = authenticate_customer_session(conn, created["session_token"])
+    assert session is not None
+    assert session["account_id"] == account_id
+    assert session["email"] == email.lower()
+
+
+def test_postgres_customer_wallet_and_paper_trading_lifecycle(postgres_connection):
+    conn = postgres_connection
+    email = uuid.uuid4().hex + "@trader.test"
+    account_id = register_customer_account(conn, email, "correct horse battery staple")
+    token = create_email_verification_token(conn, account_id)
+    assert consume_email_verification_token(conn, token)
+
+    wallet = "11111111111111111111111111111111"
+    add_wallet(conn, account_id, wallet, "Postgres integration wallet")
+    assert list_wallets(conn, account_id)[0]["label"] == "Postgres integration wallet"
+
+    paper = create_paper_account(conn, account_id, 500, "Postgres test account")
+    bought = place_paper_trade(
+        conn, account_id, paper["id"], asset_id="integration-mint",
+        side="buy", amount_usd=100, price_usd=2, token_name="Integration Token",
+    )
+    assert bought["cash_balance_usd"] == 400
+    assert len(list_paper_positions(conn, account_id, paper["id"])) == 1
+
+    sold = place_paper_trade(
+        conn, account_id, paper["id"], asset_id="integration-mint",
+        side="sell", amount_usd=60, price_usd=3,
+    )
+    assert sold["realized_pnl_usd"] == 20
+    assert sold["cash_balance_usd"] == 460
+    assert len(list_paper_trades(conn, account_id, paper["id"])) == 2
+
+
+def test_postgres_customer_integration_credentials_are_encrypted_and_tenant_scoped(postgres_connection):
+    conn = postgres_connection
+    suffix = uuid.uuid4().hex
+    account_a = register_customer_account(
+        conn, suffix + "@integration-a.test", "correct horse battery staple"
+    )
+    account_b = register_customer_account(
+        conn, suffix + "@integration-b.test", "correct horse battery staple"
+    )
+    for account_id in (account_a, account_b):
+        token = create_email_verification_token(conn, account_id)
+        assert consume_email_verification_token(conn, token)
+
+    key = Fernet.generate_key().decode("ascii")
+    credentials = {"api_key": "postgres-private-helius-key"}
+    status = save_customer_integration(
+        conn, account_a, "helius", credentials, encryption_key=key
+    )
+    stored = conn.execute(
+        "SELECT encrypted_payload FROM customer_integrations WHERE account_id=? AND provider='helius'",
+        (account_a,),
+    ).fetchone()
+    assert credentials["api_key"] not in stored["encrypted_payload"]
+    assert status["configured"] is True
+    assert load_customer_integration(
+        conn, account_a, "helius", encryption_key=key
+    ) == credentials
+    assert load_customer_integration(
+        conn, account_b, "helius", encryption_key=key
+    ) is None
+    assert get_customer_integration_status(
+        conn, account_b, "helius"
+    )["configured"] is False
+
+
+def test_postgres_customer_registration_and_signin_routes(monkeypatch):
+    settings = Settings(
+        db_path=":memory:",
+        read_api_keys=frozenset(),
+        admin_api_keys=frozenset(),
+        database_url=DATABASE_URL,
+    )
+    monkeypatch.setenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        email = uuid.uuid4().hex + "@routes.test"
+        registered = client.post(
+            "/v1/customer/register",
+            json={"email": email, "password": "correct horse battery staple"},
+        )
+        assert registered.status_code == 201
+        assert registered.json()["authenticated"] is True
+        assert client.get("/v1/customer/me").json()["email"] == email
+        login = client.post(
+            "/v1/customer/login",
+            json={"email": email, "password": "correct horse battery staple"},
+        )
+        assert login.status_code == 200
+        assert client.get("/v1/customer/me").json()["email"] == email
+        csrf = login.json()["csrf_token"]
+
+        wallet = "11111111111111111111111111111111"
+        added_wallet = client.post(
+            "/v1/customer/wallets",
+            headers={"X-CSRF-Token": csrf},
+            json={"wallet_address": wallet, "label": "Postgres route wallet"},
+        )
+        assert added_wallet.status_code == 200
+        assert client.get("/v1/customer/wallets").json()["wallets"][0]["label"] == "Postgres route wallet"
+
+        paper = client.post(
+            "/v1/customer/paper-accounts",
+            headers={"X-CSRF-Token": csrf},
+            json={"starting_capital_usd": 250, "name": "Postgres route paper"},
+        )
+        assert paper.status_code == 201
+        paper_id = paper.json()["paper_account"]["id"]
+        trade = client.post(
+            f"/v1/customer/paper-accounts/{paper_id}/trades",
+            headers={"X-CSRF-Token": csrf},
+            json={"asset_id": "route-test-mint", "side": "buy", "amount_usd": 25, "reference_price": 5},
+        )
+        assert trade.status_code == 201
+
+        secret = "route-private-telegram-token"
+        saved = client.post(
+            "/v1/customer/integrations",
+            headers={"X-CSRF-Token": csrf},
+            json={"provider": "telegram", "credentials": {"bot_token": secret, "chat_id": "12345"}},
+        )
+        assert saved.status_code == 200
+        assert secret not in saved.text
+        assert "encrypted_payload" not in saved.text
+        disconnected = client.delete(
+            "/v1/customer/integrations/telegram",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert disconnected.status_code == 200
+        assert disconnected.json()["disconnected"] is True
+
+
+
+def test_postgres_concurrent_paper_buys_cannot_overspend_same_account(postgres_connection):
+    conn = postgres_connection
+    email = uuid.uuid4().hex + "@concurrency.test"
+    account_id = register_customer_account(conn, email, "correct horse battery staple")
+    token = create_email_verification_token(conn, account_id)
+    assert consume_email_verification_token(conn, token)
+    paper = create_paper_account(conn, account_id, 50, "Concurrent spend test")
+    barrier = Barrier(2)
+
+    def attempt_buy():
+        worker_conn = connect(":memory:", DATABASE_URL)
+        try:
+            barrier.wait(timeout=10)
+            try:
+                place_paper_trade(
+                    worker_conn, account_id, paper["id"], asset_id="race-mint",
+                    side="buy", amount_usd=40, price_usd=1,
+                )
+                return "filled"
+            except CustomerDataError:
+                worker_conn.rollback()
+                return "rejected"
+        finally:
+            worker_conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: attempt_buy(), range(2)))
+
+    assert sorted(outcomes) == ["filled", "rejected"]
+    final = conn.execute(
+        "SELECT cash_balance_usd FROM customer_paper_accounts WHERE id=?",
+        (paper["id"],),
+    ).fetchone()
+    assert final["cash_balance_usd"] == 10
+    assert len(list_paper_trades(conn, account_id, paper["id"])) == 1
+
+
+def test_sqlite_to_postgres_data_transfer_round_trip(tmp_path):
+    """Exercise the actual importer against a fresh PostgreSQL schema."""
+    sqlite_path = tmp_path / "legacy-signalforce.db"
+    legacy = connect(str(sqlite_path))
+    run_migrations(legacy)
+    now = utcnow()
+    legacy.execute(
+        "INSERT INTO data_sources(name,kind,last_success_at) VALUES(?,?,?)",
+        ("migration-fixture", "test", now),
+    )
+    legacy.execute(
+        "INSERT INTO observations(source,asset_id,kind,payload,observed_at,collected_at) "
+        "VALUES(?,?,?,?,?,?)",
+        ("migration-fixture", "fixture-mint", "snapshot", "{\"price\":1}", now, now),
+    )
+    original_id = legacy.execute(
+        "SELECT id FROM observations WHERE asset_id='fixture-mint'"
+    ).fetchone()[0]
+    legacy.execute(
+        "INSERT INTO customer_accounts(id,email,password_hash,status,email_verified_at,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("migration-customer", "migration@example.test", "test-hash", "active", now, now, now),
+    )
+    legacy.commit()
+    names, foreign_keys, source_counts = source_inventory(legacy)
+
+    schema_name = "sf_migration_" + uuid.uuid4().hex
+    target = psycopg.connect(DATABASE_URL)
+    try:
+        target.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema_name))
+        )
+        target.execute(
+            sql.SQL("SET search_path TO {}").format(sql.Identifier(schema_name))
+        )
+        target.commit()
+
+        run_migrations(PostgresConnection(target))
+        clear_migration_seed_rows(target)
+        copied = copy_data(legacy, target, names, foreign_keys)
+
+        assert copied == source_counts
+        assert target.execute(
+            "SELECT email FROM customer_accounts WHERE id='migration-customer'"
+        ).fetchone()[0] == "migration@example.test"
+        assert target.execute(
+            "SELECT COUNT(*) FROM observations WHERE asset_id='fixture-mint'"
+        ).fetchone()[0] == 1
+
+        next_row = target.execute(
+            "INSERT INTO observations(source,asset_id,kind,payload,observed_at,collected_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("migration-fixture", "after-import", "snapshot", "{}", now, now),
+        ).fetchone()
+        assert next_row[0] > original_id
+    finally:
+        legacy.close()
+        target.rollback()
+        target.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema_name))
+        )
+        target.commit()
+        target.close()
+
+
+def test_postgres_customer_automated_paper_traders_are_isolated_and_leased(postgres_connection):
+    from app.customer_data import get_customer_paper_trader, pause_customer_paper_trader, start_customer_paper_trader
+    from app.customer_paper_bot import (
+        _claim_worker_lease, _release_worker_lease, process_customer_accounts,
+    )
+
+    conn = postgres_connection
+    account_a = register_customer_account(
+        conn, uuid.uuid4().hex + "@paper-a.test", "correct horse battery staple"
+    )
+    account_b = register_customer_account(
+        conn, uuid.uuid4().hex + "@paper-b.test", "correct horse battery staple"
+    )
+    trader_a = start_customer_paper_trader(conn, account_a, 1000, 100, "gradual")
+    trader_b = start_customer_paper_trader(conn, account_b, 2500, 750, "aggressive")
+    assert trader_a["cash_balance_usd"] == 1000
+    assert trader_b["cash_balance_usd"] == 2500
+
+    pause_customer_paper_trader(conn, account_a)
+    with pytest.raises(CustomerDataError):
+        place_paper_trade(
+            conn, account_a, trader_a["id"], asset_id="paused-mint",
+            side="buy", amount_usd=10, price_usd=1, automated=True,
+        )
+    trader_a = start_customer_paper_trader(conn, account_a, 1000, 100, "gradual")
+
+    place_paper_trade(
+        conn, account_a, trader_a["id"], asset_id="postgres-paper-mint",
+        side="buy", amount_usd=100, price_usd=1, automated=True,
+    )
+    pair = {"priceUsd": "2", "baseToken": {"name": "Postgres Paper Token"}}
+    result = process_customer_accounts(conn, {"postgres-paper-mint": pair}, {})
+    assert result["sells"] == 1
+    assert result["targets_reached"] == 1
+
+    reached = get_customer_paper_trader(conn, account_a)
+    untouched = get_customer_paper_trader(conn, account_b)
+    assert reached["auto_status"] == "target_reached"
+    assert reached["profit_usd"] == 100
+    assert untouched["is_running"] is True
+    assert untouched["cash_balance_usd"] == 2500
+    assert untouched["positions"] == []
+
+    assert len(list_paper_trades(conn, account_a, trader_a["id"])) == 2
+    assert _claim_worker_lease(conn, "postgres-worker-a") is True
+    assert _claim_worker_lease(conn, "postgres-worker-b") is False
+    _release_worker_lease(conn, "postgres-worker-a")
+    assert _claim_worker_lease(conn, "postgres-worker-b") is True
+    _release_worker_lease(conn, "postgres-worker-b")

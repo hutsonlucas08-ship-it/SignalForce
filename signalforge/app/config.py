@@ -1,6 +1,8 @@
 """Settings loaded from environment variables. No secrets live in code."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from cryptography.fernet import Fernet
 
 MIN_KEY_LENGTH = 24
 VERSION = "0.1.0"
@@ -18,6 +20,7 @@ class Settings:
     rate_limit_per_minute: int = 300
     stale_after_seconds: int = 300
     version: str = VERSION
+    database_url: str | None = field(default=None, repr=False)
 
 
 def _keys(name: str) -> frozenset:
@@ -31,15 +34,47 @@ def _keys(name: str) -> frozenset:
     return keys
 
 
+def _database_url() -> str | None:
+    """Read the optional hosted PostgreSQL URL without exposing it in settings logs."""
+    value = os.getenv("DATABASE_URL", "").strip()
+    if not value:
+        return None
+    if not value.startswith(("postgres://", "postgresql://")):
+        raise ConfigError("DATABASE_URL must use the postgres:// or postgresql:// scheme")
+    return value
+
+
 def load_settings() -> Settings:
     read_keys = _keys("SIGNALFORGE_READ_KEYS")
     admin_keys = _keys("SIGNALFORGE_ADMIN_KEYS")
     if read_keys & admin_keys:
         raise ConfigError("A key cannot be both a read key and an admin key")
+    database_url = _database_url()
+    if os.getenv("RENDER_SERVICE_ID") and not database_url:
+        raise ConfigError(
+            "DATABASE_URL is required on Render. Refusing to start with ephemeral SQLite storage."
+        )
+    if os.getenv("RENDER_SERVICE_ID"):
+        encryption_key = os.getenv("SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY", "").strip()
+        if not encryption_key:
+            raise ConfigError(
+                "SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY is required on Render to protect customer integrations."
+            )
+        try:
+            Fernet(encryption_key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise ConfigError(
+                "SIGNALFORCE_CREDENTIAL_ENCRYPTION_KEY must be a valid Fernet key."
+            ) from exc
+        if os.getenv("SIGNALFORGE_COOKIE_SECURE", "true").strip().lower() == "false":
+            raise ConfigError(
+                "SIGNALFORGE_COOKIE_SECURE must remain true on Render."
+            )
     return Settings(
         db_path=os.getenv("SIGNALFORGE_DB_PATH", "./data/signalforge.db"),
         read_api_keys=read_keys,
         admin_api_keys=admin_keys,
         rate_limit_per_minute=int(os.getenv("SIGNALFORGE_RATE_LIMIT_PER_MINUTE", "300")),
         stale_after_seconds=int(os.getenv("SIGNALFORGE_STALE_AFTER_SECONDS", "300")),
+        database_url=database_url,
     )

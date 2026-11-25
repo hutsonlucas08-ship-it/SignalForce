@@ -116,11 +116,11 @@ def store_wallet_transactions(conn, wallet_address: str, transactions: Iterable[
     for event in events:
         cursor = conn.execute(
             """
-            INSERT OR IGNORE INTO wallet_trade_events (
+            INSERT INTO wallet_trade_events (
                 wallet_address, signature, mint, token_name, token_symbol, side,
                 token_amount, sol_amount, usd_amount, price_usd, market_cap_usd,
                 occurred_at, source, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
             """,
             (
                 event["wallet_address"], event["signature"], event["mint"],

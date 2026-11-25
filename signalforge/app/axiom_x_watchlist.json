@@ -1,0 +1,1163 @@
+{
+  "version": 1,
+  "source": "Axiom X tracker import",
+  "events": {
+    "tweets": "t",
+    "profile_updates": "a",
+    "follows": "f"
+  },
+  "accounts": [
+    {
+      "handle": "0xinfra",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "a16z",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "a1lon9",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "abc",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "afpost",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "aggrnews",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "alohquant",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "alx",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "and_khamoo",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "andyayrey",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "anthrupad",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "ap",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "austin_federa",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "autismcapital",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "balltzehk",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "based16z",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bbc",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bbcbreaking",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bbcnews",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "beeple",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bensig",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bentodar",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "billym2k",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "binance",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "binancefutures",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "binance_intern",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "binanceus",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "binancezh",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bitcoin",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "blknoiz06",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bnbchain",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bonk_inu",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bryan_johnson",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "buddiesforpaws",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bwenews",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "bybit_official",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "catturd2",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cb_doge",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cbsnews",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "chatgptapp",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cnbc",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cobie",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cobratate",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "coinbase",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "coindesk",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "coinmarketcap",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cointelegraph",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "colossal",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cookerflips",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cristiano",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cryptocom",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cyb3rgam3r420",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "cz_binance",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "dailymail",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "darkfarms1",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "degeneratenews",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "deitaone",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "dexerto",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "dingalingts",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "doge",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "dogecoin",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "dogeofficialceo",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "donaldjtrumpjr",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "dotkrueger",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "elder_plinius",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "elonmusk",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "ericbalchunas",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "erictrump",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "fearedbuck",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "firstsquawk",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "flippingprofits",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "forbes",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "fortnite",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "ga__ke",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "gamestop",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "gettrumpmemes",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "giggleacademy",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "google",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "gop",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "greg16676935420",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "heyibinance",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "heyitsyolotv",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "himgajria",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "humansnocontext",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "ieatjeets",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jack",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jameswynnreal",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jason",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jdvance",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jiankui_he",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jup_enjoyoors",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jupiterexchange",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "jup_mobile",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "kabosumama",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "kanyewest",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "kfc",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "kfc_es",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "khaokheowzoo",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "knowyourmeme",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "kobeissiletter",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "krakenfx",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "kucoincom",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "lessin",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "lex_node",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "litecoin",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "lukebelmar",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "mailonline",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "marcellxmarcell",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "marionawfal",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "martinshkreli",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "mayemusk",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "microsoft",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "moonshot",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "moonshotlisting",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "mrbeast",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "mst1287",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "muststopmurad",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "nasa",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "nate_esparza",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "nikitabier",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "notthreadguy",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "nvidia",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "nypost",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "oakzoo",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "okx",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "openai",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "openaidevs",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "ownthedoge",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "phantom",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "pmarca",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "polymarket",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "popmartglobal",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "potus",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "prguitarman",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "pubity",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "rainmaker1973",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "rajgokal",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "ratwizardx",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "realdonaldtrump",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "repligate",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "reuters",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "rockstargames",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "rookiexbt",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "rt_com",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "s1cksicks1ck",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "sama",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "sanantoniozoo",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "saylor",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "sbf_ftx",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "senlummis",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "_shadow36",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "shawmakesmagic",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "solana",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "solidintel_x",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "solporttom",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "spacex",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "stevewilldoit",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "stoolpresidente",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "telegram",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "tesla",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "teslaownerssv",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "thedailybeast",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "thedemocrats",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "theonlynom",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "thequantski",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "theroaringkitty",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "thetorontozoo",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "theunipcs",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "tier10k",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "timsweeneyepic",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "tmz",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "tradewithrunner",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "treenewsfeed",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "trumpdailyposts",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "truth_terminal",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "unusual_whales",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "usatoday",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "vibhu",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "vitalikbuterin",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "vladtenev",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "watcherguru",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "weremeow",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "whaleinsider",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "whitehouse",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "windows",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "witloofsol",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "x",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "zachwarunek",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "zachxbt",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "zerohedge",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "zoomerfied",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    },
+    {
+      "handle": "zssbecker",
+      "tweets": true,
+      "profile_updates": true,
+      "follows": true
+    }
+  ]
+}

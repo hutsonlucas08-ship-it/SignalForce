@@ -9,8 +9,8 @@ def observe(conn, asset_id: str, entry_price: float, price: Optional[float],
     now_iso = now_iso or utcnow()
     start_peak = max(entry_price, price) if price and price > 0 else entry_price
     conn.execute(
-        "INSERT OR IGNORE INTO position_tracking "
-        "(asset_id, first_seen_at, entry_liquidity_usd, peak_price) VALUES (?,?,?,?)",
+        "INSERT INTO position_tracking "
+        "(asset_id, first_seen_at, entry_liquidity_usd, peak_price) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
         (asset_id, now_iso, liquidity_usd, start_peak),
     )
     if price and price > 0:

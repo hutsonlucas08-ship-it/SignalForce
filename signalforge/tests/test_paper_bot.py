@@ -267,3 +267,34 @@ def test_fetch_gecko_new_launches_extracts_non_quote_token_addresses():
     launches = asyncio.run(paper_bot._fetch_gecko_new_launches(Client()))
     assert launches == [{"asset_id": "FreshMint", "token_name": "Fresh Coin"}]
     paper_bot._GECKO_LAUNCH_CACHE = (0.0, [])
+
+
+def test_dexscreener_profile_fallback_discovers_solana_candidates(monkeypatch):
+    import asyncio
+    from app import paper_bot
+
+    mint = "ProfileMint11111111111111111111111111"
+    profiles = [{"chainId": "solana", "tokenAddress": mint, "name": "Profile Coin", "symbol": "PRO"}]
+    pair = {
+        "chainId": "solana",
+        "baseToken": {"address": mint, "name": "Profile Coin", "symbol": "PRO"},
+        "quoteToken": {"address": "So11111111111111111111111111111111111111112"},
+        "priceUsd": "0.01", "pairCreatedAt": 1790000000000,
+        "liquidity": {"usd": 25000}, "volume": {"h24": 100000},
+    }
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        def raise_for_status(self): return None
+        def json(self): return self.payload
+
+    class Client:
+        async def get(self, url, **kwargs):
+            if "token-profiles/latest" in url: return Response(profiles)
+            if "/tokens/v1/solana/" in url: return Response([pair])
+            raise AssertionError("Unexpected discovery URL: " + url)
+
+    monkeypatch.setattr(paper_bot, "_DEX_PROFILE_CACHE", (0.0, []))
+    monkeypatch.setattr(paper_bot, "_DEX_PROFILE_RETRY_AFTER", 0.0)
+    found = asyncio.run(paper_bot._fetch_dexscreener_profile_launches(Client()))
+    assert found == [{"asset_id": mint, "token_name": "Profile Coin"}]

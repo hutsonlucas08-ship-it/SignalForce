@@ -5,10 +5,12 @@ on:
     branches:
       - smart-money-tracker
       - signalforge-2.0
+      - postgresql-migration
   pull_request:
     branches:
       - smart-money-tracker
       - signalforge-2.0
+      - postgresql-migration
   workflow_dispatch:
 
 permissions:
@@ -22,6 +24,21 @@ jobs:
   test:
     name: Run Python test suite
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: signalforce_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d signalforce_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: signalforge
@@ -36,5 +53,15 @@ jobs:
           cache-dependency-path: signalforge/requirements.txt
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
-      - name: Run tests
+      - name: Set up Node.js for the local bridge
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check local FOMO bridge JavaScript syntax
+        run: node --check fomo_bridge/bridge.js
+      - name: Run SQLite test suite
         run: python -m pytest -q
+      - name: Run PostgreSQL integration tests
+        env:
+          SIGNALFORGE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/signalforce_test
+        run: python -m pytest -q tests/test_postgres_integration.py

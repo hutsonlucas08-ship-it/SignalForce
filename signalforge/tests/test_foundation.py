@@ -137,6 +137,16 @@ def test_migrations_idempotent_and_detect_edits(tmp_path):
         "014_customer_owned_trading_data.sql",
         "015_activate_existing_beta_accounts.sql",
         "016_customer_email_verification.sql",
+        "017_remove_email_verification_requirement.sql",
+        "018_customer_automated_paper_trader.sql",
+        "019_customer_paper_bot_lease.sql",
+        "020_customer_paper_session_history.sql",
+        "021_repair_customer_paper_session_columns.sql",
+        "022_fast_customer_risk_monitor.sql",
+        "023_customer_strategy_profile.sql",
+        "024_customer_fomo_copilot.sql",
+        "025_customer_fomo_bridge_pairing.sql",
+        "026_customer_fomo_trader_leaderboards.sql",
     ]
     assert run_migrations(conn) == []
     state = conn.execute("SELECT enabled FROM paper_bot_state WHERE id=1").fetchone()
@@ -397,7 +407,7 @@ def test_dashboard_is_served_at_root():
     assert "SignalForce" in response.text
     assert "Fresh launches" in response.text
     assert "PRIVATE CUSTOMER ACCESS" in response.text
-    assert "PAPER DESK" not in response.text
+    assert "CUSTOMER PAPER DESK" in response.text
 
 
 def test_paper_accounts_start_with_separate_persistent_balances():

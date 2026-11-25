@@ -4,7 +4,6 @@ from cryptography.fernet import Fernet
 
 from app.config import Settings
 from app.main import create_app
-from app import customer_email
 
 
 def _client():
@@ -16,18 +15,14 @@ def _client():
     return TestClient(create_app(settings), base_url="https://testserver")
 
 
-def _register_and_activate(client, email, monkeypatch):
-    tokens = {}
-    async def fake_send(address, token):
-        tokens[address] = token
-    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
+def _register_and_activate(client, email, monkeypatch=None):
     response = client.post("/v1/customer/register", json={
         "email": email, "password": "correct horse battery staple"
     })
     assert response.status_code == 201
-    assert response.json()["status"] == "pending_verification"
-    verified = client.get("/v1/customer/verify-email", params={"token": tokens[email]})
-    assert verified.status_code == 200
+    assert response.json()["status"] == "active"
+    assert response.json()["authenticated"] is True
+    assert client.get("/v1/customer/me").json()["email"] == email
 
 def _login(client, email):
     response = client.post("/v1/customer/login", json={
@@ -132,27 +127,19 @@ def test_customer_can_refresh_csrf_after_session_cookie_survives_reload(monkeypa
     assert wallet.status_code == 200
 
 
-def test_unverified_customer_cannot_sign_in_until_email_link_is_used(monkeypatch):
-    tokens = {}
-    async def fake_send(email, token):
-        tokens[email] = token
-    monkeypatch.setattr(customer_email, "send_verification_email", fake_send)
+def test_customer_registration_does_not_require_email_confirmation():
     client = _client()
     created = client.post("/v1/customer/register", json={
-        "email": "verify@example.test", "password": "correct horse battery staple"
+        "email": "instant@example.test", "password": "correct horse battery staple"
     })
     assert created.status_code == 201
-    denied = client.post("/v1/customer/login", json={
-        "email": "verify@example.test", "password": "correct horse battery staple"
-    })
-    assert denied.status_code == 403
-    assert "Verify your email" in denied.json()["detail"]
-    verified = client.get("/v1/customer/verify-email", params={"token": tokens["verify@example.test"]})
-    assert verified.status_code == 200
+    assert created.json()["authenticated"] is True
+    assert client.get("/v1/customer/me").json()["email"] == "instant@example.test"
+    # Existing login remains available after the immediate registration session ends.
+    client.post("/v1/customer/logout", headers={"X-CSRF-Token": created.json()["csrf_token"]})
     assert client.post("/v1/customer/login", json={
-        "email": "verify@example.test", "password": "correct horse battery staple"
+        "email": "instant@example.test", "password": "correct horse battery staple"
     }).status_code == 200
-
 
 def test_public_homepage_serves_customer_launch_experience():
     client = _client()
@@ -160,4 +147,70 @@ def test_public_homepage_serves_customer_launch_experience():
     assert response.status_code == 200
     assert "Fresh launches" in response.text
     assert "Customer workspace" in response.text
-    assert "PAPER DESK" not in response.text
+    assert "CUSTOMER PAPER DESK" in response.text
+
+
+def test_automated_paper_trader_api_is_private_and_csrf_protected(monkeypatch):
+    client_a, client_b = _client(), _client()
+    _register_and_activate(client_a, "bot-a@example.test", monkeypatch)
+    _register_and_activate(client_b, "bot-b@example.test", monkeypatch)
+    csrf_a, csrf_b = _login(client_a, "bot-a@example.test"), _login(client_b, "bot-b@example.test")
+
+    assert client_a.get("/v1/customer/paper-trader").json()["paper_trader"] is None
+    denied = client_a.post("/v1/customer/paper-trader/start", json={
+        "starting_capital_usd": 1000, "profit_target_usd": 500, "mode": "normal"
+    })
+    assert denied.status_code == 403
+
+    started = client_a.post("/v1/customer/paper-trader/start", headers={"X-CSRF-Token": csrf_a}, json={
+        "starting_capital_usd": 1000, "profit_target_usd": 500, "mode": "normal"
+    })
+    assert started.status_code == 200
+    trader = started.json()["paper_trader"]
+    assert trader["is_running"] is True
+    assert trader["starting_capital_usd"] == 1000
+    assert trader["profit_target_usd"] == 500
+    blocked_manual = client_a.post(f"/v1/customer/paper-accounts/{trader['id']}/trades",
+        headers={"X-CSRF-Token": csrf_a}, json={"asset_id": "mint", "side": "buy", "amount_usd": 20, "reference_price": 2})
+    assert blocked_manual.status_code == 422
+    assert client_b.get("/v1/customer/paper-trader").json()["paper_trader"] is None
+
+    running_reset = client_a.post("/v1/customer/paper-trader/start",
+        headers={"X-CSRF-Token": csrf_a}, json={
+            "starting_capital_usd": 250, "profit_target_usd": 100, "mode": "gradual", "new_session": True
+        })
+    assert running_reset.status_code == 422
+
+    paused = client_a.post("/v1/customer/paper-trader/pause",
+                           headers={"X-CSRF-Token": csrf_a}, json={})
+    assert paused.status_code == 200
+    assert paused.json()["paper_trader"]["is_running"] is False
+
+    restarted = client_a.post("/v1/customer/paper-trader/start",
+        headers={"X-CSRF-Token": csrf_a}, json={
+            "starting_capital_usd": 250, "profit_target_usd": 100, "mode": "gradual", "new_session": True
+        })
+    assert restarted.status_code == 200
+    fresh = restarted.json()["paper_trader"]
+    assert fresh["starting_capital_usd"] == 250
+    assert fresh["cash_balance_usd"] == 250
+    assert fresh["profit_target_usd"] == 100
+    assert fresh["is_running"] is True
+
+    assert client_b.post("/v1/customer/paper-trader/pause",
+                         headers={"X-CSRF-Token": csrf_b}, json={}).json()["paper_trader"] is None
+
+def test_customer_routes_serve_customer_desk_and_keep_operator_console_separate():
+    client = _client()
+    for path in ("/", "/account", "/terminal"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "CUSTOMER PAPER DESK" in response.text
+        assert "No wallet connection or API key is required" in response.text
+        assert 'href="/terminal"' not in response.text
+
+    operator = client.get("/operator")
+    assert operator.status_code == 200
+    assert "SignalForce — Solana Intelligence" in operator.text
+    assert 'href="/account"' in operator.text
+
