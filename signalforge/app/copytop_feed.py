@@ -135,7 +135,7 @@ async def fetch_feed() -> dict:
             _get(client, "/coins/hot", {"window": "1h", "limit": 30}),
             _get(
                 client, "/alerts",
-                {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 50, **({"since": _alert_cursor} if _alert_cursor else {})},
+                {"min_top_traders": 2, "min_trade_usd": 500, "kinds": "confluence,big_trade", "limit": 50, **({"since": _alert_cursor} if _alert_cursor else {})},
             ),
         )
         lb_rows = _rows(lb_payload, "traders", "items", "results", "leaderboard")
