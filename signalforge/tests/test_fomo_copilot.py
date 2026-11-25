@@ -124,7 +124,7 @@ def test_manual_callout_endpoint_requires_customer_and_valid_limit():
     assert client.get("/v1/customer/fomo-copilot/callouts").status_code == 401
     _signed_in(client, "callouts@example.test")
     assert client.get("/v1/customer/fomo-copilot/callouts?limit=0").status_code == 422
-    assert client.get("/v1/customer/fomo-copilot/callouts?limit=51").status_code == 422
+    assert client.get("/v1/customer/fomo-copilot/callouts?limit=101").status_code == 422
 
 
 
