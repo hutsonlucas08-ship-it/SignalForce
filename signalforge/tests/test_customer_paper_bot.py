@@ -180,3 +180,37 @@ def test_normal_mode_banks_partial_profit_then_protects_remaining_gain():
     summary = monitor_customer_positions(conn, {mint: pullback})
     assert summary["take_profit_exits"] == 1
     assert conn.execute("SELECT COUNT(*) FROM customer_paper_positions").fetchone()[0] == 0
+
+
+def test_automated_paper_trade_truncates_long_internal_reason_without_stopping_worker():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    account = _active_customer(conn)
+    result = customer_data.place_paper_trade(
+        conn, "customer-a", account["id"],
+        asset_id="MarketMint11111111111111111111111111",
+        token_name="Market Candidate", side="buy", amount_usd=25,
+        price_usd=0.01, reason="automated risk explanation " * 20,
+        automated=True,
+    )
+    assert result["side"] == "buy"
+    row = conn.execute("SELECT reason FROM customer_paper_trades WHERE paper_account_id=?",
+                       (account["id"],)).fetchone()
+    assert len(row["reason"]) == 200
+
+
+def test_manual_paper_trade_still_rejects_overlong_reason():
+    conn = connect(":memory:")
+    run_migrations(conn)
+    account = _active_customer(conn)
+    try:
+        customer_data.place_paper_trade(
+            conn, "customer-a", account["id"],
+            asset_id="MarketMint11111111111111111111111111",
+            token_name="Market Candidate", side="buy", amount_usd=25,
+            price_usd=0.01, reason="manual reason " * 20,
+        )
+    except customer_data.CustomerDataError as exc:
+        assert "1–200" in str(exc)
+    else:
+        raise AssertionError("Manual trade reason validation should remain strict")
