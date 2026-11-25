@@ -270,7 +270,18 @@ function setMode(next){mode=next;$("loginTab").classList.toggle("primary",mode==
 $("loginTab").onclick=()=>setMode("login");$("registerTab").onclick=()=>setMode("register");$("togglePassword").onclick=()=>{const input=$("password"),show=input.type==="password";input.type=show?"text":"password";$("togglePassword").textContent=show?"Hide":"Show";$("togglePassword").setAttribute("aria-label",show?"Hide password":"Show password");};
 $("authForm").onsubmit=async e=>{e.preventDefault();$("authSubmit").disabled=true;try{if(mode==="register"){const r=await request("/v1/customer/register",{method:"POST",body:JSON.stringify({email:$("email").value,password:$("password").value})});csrf=r.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);await loadWorkspace();message("notice","Account created successfully. You're signed in.");return;}const r=await request("/v1/customer/login",{method:"POST",body:JSON.stringify({email:$("email").value,password:$("password").value})});csrf=r.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);await loadWorkspace();}catch(err){message("authMessage",err.message,true);}finally{$("authSubmit").disabled=false}};
 
-async function loadWorkspace(){const me=await request("/v1/customer/me");const csrfData=await request("/v1/customer/csrf");csrf=csrfData.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);$("authView").classList.add("hidden");$("workspace").classList.remove("hidden");$("workspace").after($("launchSection"));$("entryLayout").classList.add("hidden");$("signedEmail").textContent=me.email;await loadPaperTrader();await loadFomoCopilot()}
+async function loadWorkspace(){const me=await request("/v1/customer/me");const csrfData=await request("/v1/customer/csrf");csrf=csrfData.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);$("authView").classList.add("hidden");$("workspace").classList.remove("hidden");$("workspace").after($("launchSection"));$("entryLayout").classList.add("hidden");$("signedEmail").textContent=me.email;await loadPaperTrader();await loadFomoCopilot();await loadTelegramIntegrationStatus()}
+async function loadTelegramIntegrationStatus(){
+ const status=$("calloutTelegramStatus");
+ try{
+  const data=await request("/v1/customer/integrations");
+  const telegram=(data.integrations||[]).find(item=>item.provider==="telegram");
+  if(!telegram||!telegram.configured){status.textContent="Telegram is not connected yet. Save your bot token, press Start in your bot, then use Find my chat and Test connection.";return;}
+  if(telegram.status==="connected"){status.textContent="Telegram connected and verified. Use Send top callouts when you want a manual alert.";return;}
+  if(telegram.status==="error"){status.textContent="Telegram connection needs attention ("+(telegram.last_error_code||"provider error")+"). Use Find my chat, then Test connection.";return;}
+  status.textContent="Telegram bot token is saved, but the chat is not verified yet. Open your bot, press Start, send it a message, then use Find my chat and Test connection."; 
+ }catch(error){status.textContent="Could not check Telegram status: "+error.message;}
+}
 let traderAccount=null,newSessionRequested=false;
 async function loadPaperTrader(){
  const data=await request("/v1/customer/paper-trader");traderAccount=data.paper_trader;
