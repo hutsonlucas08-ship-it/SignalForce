@@ -38,3 +38,26 @@ def test_token_meta_can_attach_to_existing_post():
     _upsert({"id": "123456789", "author": {"handle": "alpha"}, "text": "mint"})
     j7_feed._token_meta({"id": "123456789", "mint": SOL_MINT, "tokenMeta": {"symbol": "ABC"}})
     assert snapshot()["events"][0]["contracts"] == [SOL_MINT]
+
+
+
+def test_imported_axiom_watchlist_has_all_three_event_types_enabled():
+    from app import j7_feed
+    summary = j7_feed.watchlist_summary()
+    assert summary["account_count"] == 192
+    assert summary["tweets_enabled"] == 192
+    assert summary["profile_updates_enabled"] == 192
+    assert summary["follows_enabled"] == 192
+
+
+def test_x_posts_are_limited_to_imported_watchlist():
+    assert _normalize({
+        "id": "987654321",
+        "author": {"handle": "elonmusk"},
+        "text": "hello from a watched account",
+    }) is not None
+    assert _normalize({
+        "id": "987654322",
+        "author": {"handle": "not_in_watchlist"},
+        "text": "not on the imported list",
+    }) is None
