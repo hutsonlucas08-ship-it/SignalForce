@@ -223,6 +223,46 @@ async def run_feed(stop_event: asyncio.Event, jwt: str) -> None:
         if isinstance(item, dict) and item.get("isWebhook"):
             _upsert(item, "webhook")
 
+    @client.on("following_update")
+    async def following_update(item):
+        if not isinstance(item, dict):
+            return
+        user = item.get("user") if isinstance(item.get("user"), dict) else {}
+        followed = item.get("following") if isinstance(item.get("following"), dict) else {}
+        handle = str(user.get("handle") or "").lstrip("@")
+        row = _watchlist_row(handle)
+        if not row or not row.get("follows"):
+            return
+        target = str(followed.get("handle") or "an account").lstrip("@")
+        event_id = str(item.get("id") or f"follow:{handle}:{target}:{time.time_ns()}")
+        now = datetime.now(timezone.utc).isoformat()
+        _EVENTS[event_id] = {"id": event_id, "kind": "follow_update", "platform": "X", "author": handle, "author_name": str(user.get("name") or handle), "text": f"@{handle} followed @{target}", "url": f"https://x.com/{handle}", "created_at": now, "contracts": [], "source": "J7Tracker", "observed_at": now}
+        _EVENTS.move_to_end(event_id, last=False)
+        while len(_EVENTS) > _MAX_EVENTS:
+            _EVENTS.popitem(last=True)
+
+    @client.on("profile_update")
+    async def profile_update(item):
+        if not isinstance(item, dict):
+            return
+        user = item.get("user") if isinstance(item.get("user"), dict) else {}
+        before = item.get("before") if isinstance(item.get("before"), dict) else {}
+        handle = str(user.get("handle") or before.get("handle") or "").lstrip("@")
+        row = _watchlist_row(handle)
+        if not row or not row.get("profile_updates"):
+            return
+        changes = item.get("modifications") if isinstance(item.get("modifications"), list) else []
+        if not changes:
+            for field in ("name", "description", "avatar", "banner", "location", "url"):
+                if user.get(field) != before.get(field):
+                    changes.append("profile." + field)
+        event_id = str(item.get("id") or f"profile:{handle}:{time.time_ns()}")
+        now = datetime.now(timezone.utc).isoformat()
+        _EVENTS[event_id] = {"id": event_id, "kind": "profile_update", "platform": "X", "author": handle, "author_name": str(user.get("name") or handle), "text": f"@{handle} profile changed: " + (", ".join(changes) if changes else "profile updated"), "url": f"https://x.com/{handle}", "created_at": now, "contracts": [], "changes": changes, "source": "J7Tracker", "observed_at": now}
+        _EVENTS.move_to_end(event_id, last=False)
+        while len(_EVENTS) > _MAX_EVENTS:
+            _EVENTS.popitem(last=True)
+
     @client.on("token_meta")
     async def token_meta(item):
         _token_meta(item)
