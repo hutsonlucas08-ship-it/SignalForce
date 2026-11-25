@@ -370,7 +370,9 @@ function tokenActions(mint){
  const value=String(mint||"").trim();
  if(!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value))return '<small class="muted">No verified Solana contract · token links unavailable</small>';
  const encoded=encodeURIComponent(value);
- return '<small class="coin-actions"><a href="https://pump.fun/coin/'+encoded+'" target="_blank" rel="noopener noreferrer">pump.fun ↗</a> · <button class="btn" type="button" data-open-fomo="'+esc(value)+'">Copy CA + open FOMO</button></small>';
+ const axiomUrl="https://axiom.trade/t/"+encoded+"?chain=sol";
+ const pumpUrl="https://pump.fun/coin/"+encoded;
+ return '<small class="coin-actions"><a href="'+axiomUrl+'" target="_blank" rel="noopener noreferrer" title="Open this Solana token in Axiom">Axiom ↗</a> · <a href="'+pumpUrl+'" target="_blank" rel="noopener noreferrer" title="Fallback: open this token on pump.fun">pump.fun fallback ↗</a> · <button class="btn" type="button" data-open-fomo="'+esc(value)+'">Copy CA + open FOMO</button></small>';
 }
 document.addEventListener("click",async event=>{
  const button=event.target.closest("[data-open-fomo]");
