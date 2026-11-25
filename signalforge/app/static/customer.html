@@ -283,7 +283,7 @@ async function loadXCallouts(){
    ?"J7TRACKER NOT CONNECTED · Add your J7Tracker JWT as the private Render environment variable J7TRACKER_JWT."
    :data.connected
     ?"J7TRACKER LIVE · "+events.length+" recent posts/callouts · "+(data.upstream_connected===false?"upstream X source reconnecting":"stream connected")
-    :"J7TRACKER "+String(data.state||"WAITING").toUpperCase()+" · "+(data.last_error||"Waiting for live posts.");
+    :"J7TRACKER "+String(data.state||"WAITING").toUpperCase()+" · "+(data.last_error||"Waiting for live posts."));
   status.classList.toggle("error",!data.connected);
   host.innerHTML=events.length?events.map(item=>{
    const contracts=item.contracts||[];
