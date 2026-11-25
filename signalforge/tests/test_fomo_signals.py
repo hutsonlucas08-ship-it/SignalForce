@@ -30,7 +30,7 @@ def test_builds_manual_watchlist_candidate_without_fabricated_levels():
 
 
 def test_rejects_stale_assets():
-    result = build_callouts([_asset(age=900)], [_pair()])
+    result = build_callouts([_asset(age=1200)], [_pair()])
     assert result["callouts"] == []
     assert result["rejected"]["stale"] == 1
 
