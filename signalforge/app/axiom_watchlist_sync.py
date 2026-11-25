@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -39,7 +40,10 @@ async def sync_available_accounts(jwt: str) -> dict:
         }
         already_active = (main - hidden) | custom | available_active
         to_unhide = sorted(set(HANDLES) & main & hidden)
-        for handle in to_unhide:
+        for index, handle in enumerate(to_unhide):
+            # J7 limits account writes to 20 per 10 seconds; stay comfortably below it.
+            if index:
+                await asyncio.sleep(0.55)
             result = await client.post(base + "/api/accounts", json={"handle": handle})
             result.raise_for_status()
         to_add = sorted((set(HANDLES) - already_active - set(to_unhide)) & pool)
