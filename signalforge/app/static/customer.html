@@ -77,6 +77,21 @@ td{color:#dce7ed}
 @media(max-width:1050px){.workspace-layout{grid-template-columns:minmax(0,1fr) 330px;gap:12px}}
 @media(max-width:760px){.workspace-layout{grid-template-columns:1fr}.x-live-sidebar{position:static;height:70vh;min-height:420px;order:2}#xCalloutsCard{height:70vh}}
 
+/* Persistent live X sidebar: visible across workspace tabs. */
+.workspace-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,390px);gap:18px;align-items:start}
+.workspace-main{min-width:0}
+.x-live-sidebar{position:sticky;top:12px;height:calc(100vh - 24px);min-height:520px;min-width:0}
+#xCalloutsCard{height:100%;margin:0!important;display:flex;flex-direction:column;min-height:0;padding:16px!important}
+#xCalloutsCard>.head{display:block;flex:0 0 auto}
+#xCalloutsCard>.head>div:first-child{margin-bottom:12px}
+#xCalloutsCard>.head .btn{margin:4px 5px 0 0}
+#xCalloutStatus{flex:0 0 auto}
+#xCalloutFeed{display:flex;flex-direction:column;gap:8px;overflow-y:auto;min-height:0;flex:1;padding-right:4px}
+#xCalloutFeed .launch-card{width:100%;flex:0 0 auto}
+#xCalloutsCard>.small{flex:0 0 auto;margin-top:10px}
+@media(max-width:1050px){.workspace-layout{grid-template-columns:minmax(0,1fr) 330px;gap:12px}}
+@media(max-width:760px){.workspace-layout{grid-template-columns:1fr}.x-live-sidebar{position:static;height:70vh;min-height:420px;order:2}#xCalloutsCard{height:70vh}}
+
 </style></head><body><div class="wrap">
 <header class="top"><div class="brand"><div class="mark">S</div><div><strong>SIGNALFORCE</strong><small>Customer workspace</small></div></div><div class="actions"><span class="pill">CUSTOMER PAPER DESK</span><span class="tag">PAPER ONLY · NO WALLET SIGNING</span></div></header>
 <div id="entryLayout" class="entry-layout"><section id="launchSection" class="card launch-section"><div class="launch-heading"><div><div class="eyebrow">LIVE SOLANA DISCOVERY</div><h2>Fresh launches</h2><p>Newest pools first · GeckoTerminal with DexScreener backup</p></div><button class="btn" id="refreshLaunches">Refresh</button></div><div id="launchFeed" class="launch-grid"><div class="empty">Loading newest Solana launches…</div></div><p class="small" id="launchNote">New pool creation is a discovery signal, not proof of legitimacy or safety. Always review liquidity, holders, authorities and trading activity.</p></section>
@@ -183,6 +198,7 @@ td{color:#dce7ed}
   <p class="small">Read-only social feed. Posts and mentions are not verified trade signals. Token links appear only when J7Tracker supplies a valid Solana contract address.</p>
  </div>
 </aside>
+</div>
 </div>
 </div>
 <script>
