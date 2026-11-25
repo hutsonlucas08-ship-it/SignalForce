@@ -152,7 +152,14 @@ def place_paper_trade(
         raise CustomerDataError("Trade amount or price exceeds the supported limit.")
     if token_name is not None and (not isinstance(token_name, str) or len(token_name) > 100):
         raise CustomerDataError("Token name must be 100 characters or fewer.")
-    if not isinstance(reason, str) or not reason.strip() or len(reason) > 200:
+    if not isinstance(reason, str) or not reason.strip():
+        raise CustomerDataError("Trade reason must contain text.")
+    reason = reason.strip()
+    # Internal strategy/risk explanations can grow as scoring details evolve.
+    # Keep automated execution resilient while preserving the API's 200-char limit.
+    if automated:
+        reason = reason[:200]
+    elif len(reason) > 200:
         raise CustomerDataError("Trade reason must be 1–200 characters.")
     account = conn.execute(
         """SELECT id,cash_balance_usd,auto_session_id,enabled,auto_status FROM customer_paper_accounts
