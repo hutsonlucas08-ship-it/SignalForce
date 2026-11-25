@@ -131,18 +131,18 @@ async def fetch_feed() -> dict:
         # These provider endpoints are independent. Fetch them concurrently so
         # one slow endpoint does not serially delay the entire Copilot panel.
         (lb_payload, lb_error), (hot_payload, hot_error), (alert_payload, alert_error) = await asyncio.gather(
-            _get(client, "/traders", {"platform": "fomo", "window": "7d", "sort": "realized", "limit": 20}),
-            _get(client, "/coins/hot", {"window": "1h", "limit": 15}),
+            _get(client, "/traders", {"platform": "fomo", "window": "7d", "sort": "realized", "limit": 30}),
+            _get(client, "/coins/hot", {"window": "1h", "limit": 30}),
             _get(
                 client, "/alerts",
-                {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 20, **({"since": _alert_cursor} if _alert_cursor else {})},
+                {"min_top_traders": 3, "min_trade_usd": 3000, "kinds": "confluence,big_trade", "limit": 50, **({"since": _alert_cursor} if _alert_cursor else {})},
             ),
         )
         lb_rows = _rows(lb_payload, "traders", "items", "results", "leaderboard")
         leaderboard = [_normalize_trader(row) for row in lb_rows]
         handles = list(dict.fromkeys(x["handle"] for x in leaderboard if x["handle"] != "Unknown trader"))[:20]
         if handles:
-            trade_params = {"traders": ",".join(handles), "limit": 30}
+            trade_params = {"traders": ",".join(handles), "limit": 50}
             if _trade_cursor:
                 trade_params["since"] = _trade_cursor
             trade_payload, trade_error = await _get(client, "/trades", trade_params)
