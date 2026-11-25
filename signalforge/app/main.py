@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed, launch_feed
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed, launch_feed, j7_feed
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -146,6 +146,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.paper_bot_task = None
     app.state.helius_sync_stop = asyncio.Event()
     app.state.helius_sync_task = None
+    app.state.j7_feed_stop = asyncio.Event()
+    app.state.j7_feed_task = None
     app.state.customer_paper_bot_stop = asyncio.Event()
     app.state.customer_paper_bot_task = None
 
@@ -163,12 +165,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 app.state.helius_sync_task = asyncio.create_task(
                     run_helius_sync(settings.db_path, app.state.helius_sync_stop)
                 )
+            j7_jwt = os.getenv("J7TRACKER_JWT", "").strip()
+            if j7_jwt:
+                app.state.j7_feed_task = asyncio.create_task(
+                    j7_feed.run_feed(app.state.j7_feed_stop, j7_jwt)
+                )
 
     @app.on_event("shutdown")
     async def stop_paper_bot():
         app.state.paper_bot_stop.set()
         app.state.helius_sync_stop.set()
         app.state.customer_paper_bot_stop.set()
+        app.state.j7_feed_stop.set()
+        if app.state.j7_feed_task is not None:
+            try:
+                await asyncio.wait_for(app.state.j7_feed_task, timeout=6)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                app.state.j7_feed_task.cancel()
         helius_task = app.state.helius_sync_task
         if helius_task is not None:
             try:
@@ -462,6 +475,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except customer_integrations.CustomerIntegrationError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
+    @app.get("/v1/customer/x-callouts")
+    def customer_x_callouts(limit: int = 100, session=Depends(require_customer)):
+        """Return read-only live X posts and J7 launch alerts for this signed-in customer."""
+        if limit < 1 or limit > 200:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 200")
+        return j7_feed.snapshot(limit)
+
     @app.get("/v1/customer/fomo-copilot/provider-feed")
     async def customer_fomo_provider_feed(session=Depends(require_customer)):
         """Return cached, public, read-only Copy.top FOMO intelligence for this signed-in customer."""
@@ -659,13 +679,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/v1/customer/fomo-copilot/callouts")
     async def customer_fomo_callouts(
-        limit: int = 50,
+        limit: int = 100,
         session=Depends(require_customer),
         conn=Depends(get_conn),
     ):
-        """Generate manual-review candidates from fresh, observed Solana assets."""
-        if limit < 1 or limit > 50:
-            raise HTTPException(status_code=422, detail="Limit must be between 1 and 50")
+        """Generate an expanded manual-review watchlist without weakening risk filters."""
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=422, detail="Limit must be between 1 and 100")
         return await _customer_callout_data(session["account_id"], conn, limit)
 
     @app.post("/v1/customer/fomo-copilot/callouts/telegram")
@@ -704,8 +724,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     ", ".join(item.get("qualified_trader_activity", {}).get("traders", []))
                     if item.get("qualified_trader_activity") else "none observed"
                 ),
-                "FOMO app: " + item["fomo_phone_url"],
-                "FOMO web: " + item["fomo_web_url"],
                 "Token: " + item["asset_id"],
             ])
         lines.append("\nNo entry/stop/target is supplied. Verify token safety and slippage yourself.")
