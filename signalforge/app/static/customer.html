@@ -49,15 +49,28 @@ td{color:#dce7ed}
 .small{color:#8799a8}
 @media(max-width:760px){.wrap{padding:16px 12px 40px}.auth{padding:22px}.launch-section{padding:15px}#workspace .card.wide{padding:16px}}
 
+
+/* Entry screen: launch feed and sign-in stay side by side on desktop. */
+.entry-layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);gap:18px;align-items:start;margin-bottom:22px}
+#entryLayout .launch-section{margin:0;min-width:0}
+#entryLayout .auth{max-width:none;margin:0;padding:25px}
+.password-row{display:flex;gap:8px;align-items:stretch}
+.password-row input{flex:1;min-width:0}
+.password-row button{min-width:72px}
+.coin-actions{display:block;margin-top:6px}
+.coin-actions a{display:inline-block;margin-right:6px}
+.coin-actions button{padding:5px 8px;font-size:10px}
+#launchNote{margin-top:13px}
+@media(max-width:900px){.entry-layout{grid-template-columns:1fr}.entry-layout .auth{max-width:none}}
 </style></head><body><div class="wrap">
 <header class="top"><div class="brand"><div class="mark">S</div><div><strong>SIGNALFORCE</strong><small>Customer workspace</small></div></div><div class="actions"><span class="pill">CUSTOMER PAPER DESK</span><span class="tag">PAPER ONLY · NO WALLET SIGNING</span></div></header>
-<section class="card launch-section"><div class="launch-heading"><div><div class="eyebrow">LIVE SOLANA DISCOVERY</div><h2>Fresh launches</h2><p>Newest pools first · GeckoTerminal public feed</p></div><button class="btn" id="refreshLaunches">Refresh</button></div><div id="launchFeed" class="launch-grid"><div class="empty">Loading newest Solana launches…</div></div><p class="small" id="launchNote">New pool creation is a discovery signal, not proof of legitimacy or safety. Always review liquidity, holders, authorities and trading activity.</p></section>
+<div id="entryLayout" class="entry-layout"><section id="launchSection" class="card launch-section"><div class="launch-heading"><div><div class="eyebrow">LIVE SOLANA DISCOVERY</div><h2>Fresh launches</h2><p>Newest pools first · GeckoTerminal with DexScreener backup</p></div><button class="btn" id="refreshLaunches">Refresh</button></div><div id="launchFeed" class="launch-grid"><div class="empty">Loading newest Solana launches…</div></div><p class="small" id="launchNote">New pool creation is a discovery signal, not proof of legitimacy or safety. Always review liquidity, holders, authorities and trading activity.</p></section>
 <div id="authView" class="auth card">
  <div class="eyebrow">PRIVATE CUSTOMER ACCESS</div><h1 style="font-size:24px;margin:5px 0 4px">Your automated paper trader.</h1><p class="muted">Sign in to set up your own automated paper trader. No wallet connection or API key is required.</p>
  <div class="tabs" style="margin-top:20px"><button class="btn primary" id="loginTab">Sign in</button><button class="btn" id="registerTab">Create account</button></div>
- <form id="authForm"><div class="field"><label>Email address</label><input id="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="password" type="password" autocomplete="current-password" required minlength="12" maxlength="1024" placeholder="At least 12 characters"></div><p class="small" id="authHelp">Already have an account? Enter the email and password you used when you registered, then select Sign in. New here? Select Create account and use a password with at least 12 characters.</p><button class="btn primary" id="authSubmit" style="width:100%">Sign in securely</button></form>
+ <form id="authForm"><div class="field"><label>Email address</label><input id="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label>Password</label><div class="password-row"><input id="password" type="password" autocomplete="current-password" required minlength="12" maxlength="1024" placeholder="At least 12 characters"><button class="btn" id="togglePassword" type="button" aria-label="Show password">Show</button></div></div><p class="small" id="authHelp">Already have an account? Enter the email and password you used when you registered, then select Sign in. New here? Select Create account and use a password with at least 12 characters.</p><button class="btn primary" id="authSubmit" type="submit" style="width:100%">Sign in securely</button></form>
  <div id="authMessage" class="message hidden"></div><p class="small">Your account is ready immediately after registration. No email confirmation is required. Use a unique password you do not use on other websites.</p>
-</div>
+</div></div>
 <div id="workspace" class="hidden">
  <div class="head" style="align-items:center"><div><div class="eyebrow">ACCOUNT OVERVIEW</div><h1 style="margin:4px 0;font-size:23px">Customer workspace</h1><p class="muted" id="signedEmail"></p></div><button class="btn" id="logout">Sign out</button></div>
  <div id="notice" class="message hidden"></div>
@@ -149,14 +162,42 @@ td{color:#dce7ed}
 </div>
 <script>
 const $=id=>document.getElementById(id);let csrf=sessionStorage.getItem("sf_customer_csrf")||"",mode="login",paperAccounts=[];
-async function loadLaunches(){const host=$("launchFeed");try{const response=await fetch("/v1/research/new-launches",{headers:{"Accept":"application/json"}});if(!response.ok)throw new Error("Launch feed temporarily unavailable");const data=await response.json();const rows=(data.launches||[]).slice().sort((a,b)=>new Date(b.pool_created_at||0)-new Date(a.pool_created_at||0));host.dataset.loaded="1";host.innerHTML=rows.length?rows.map(x=>'<article class="launch-card"><img src="'+esc(x.image_url||"")+'" alt="" onerror="this.style.visibility=\'hidden\'"><div style="min-width:0"><strong>'+esc(x.name||x.symbol||"Unknown token")+' <span class="muted">'+esc(x.symbol||"")+'</span></strong><small>'+esc(x.dex||"Solana pool")+' · '+esc(x.pool_created_at?new Date(x.pool_created_at).toLocaleString():"Time unavailable")+'</small><small class="launch-meta">Liquidity '+usd(x.liquidity_usd)+' · 24h volume '+usd(x.volume_24h_usd)+'</small><small><a href="https://dexscreener.com/solana/'+encodeURIComponent(x.pool_address||x.asset_id)+'" target="_blank" rel="noopener noreferrer">View market ↗</a> · <a href="https://solscan.io/token/'+encodeURIComponent(x.asset_id)+'" target="_blank" rel="noopener noreferrer">Explorer ↗</a></small></div></article>').join(""):'<div class="empty">No new pools returned right now.</div>';$("launchNote").textContent=(data.note||"New pool creation is not a safety signal.")+" · Updated "+new Date().toLocaleTimeString();}catch(e){if(!host.dataset.loaded)host.innerHTML='<div class="empty">Fresh launch feed is temporarily unavailable. Refresh in a moment.</div>';}}
-async function request(path,options={}){const headers={"Content-Type":"application/json",...(options.headers||{})};if(options.method&&options.method!=="GET"&&csrf)headers["X-CSRF-Token"]=csrf;const response=await fetch(path,{...options,credentials:"same-origin",headers});let data={};try{data=await response.json()}catch(_){}if(!response.ok)throw new Error(data.detail||"Request failed ("+response.status+")");return data}
+async function loadLaunches(){
+ const host=$("launchFeed"),button=$("refreshLaunches");
+ if(host.dataset.loading==="1")return;
+ host.dataset.loading="1";button.disabled=true;
+ try{
+  const response=await fetch("/v1/research/new-launches",{headers:{"Accept":"application/json"},cache:"no-store"});
+  if(!response.ok)throw new Error("Launch feed HTTP "+response.status);
+  const data=await response.json();
+  const rows=(data.launches||[]).slice().sort((a,b)=>new Date(b.pool_created_at||0)-new Date(a.pool_created_at||0));
+  host.dataset.loaded="1";
+  host.innerHTML=rows.length?rows.map(x=>'<article class="launch-card"><img src="'+esc(x.image_url||"")+'" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'"><div style="min-width:0"><strong>'+esc(x.name||x.symbol||"Unknown token")+' <span class="muted">'+esc(x.symbol||"")+'</span></strong><small>'+esc(x.dex||"Solana pool")+' · '+esc(x.pool_created_at?new Date(x.pool_created_at).toLocaleString():"Time unavailable")+'</small><small class="launch-meta">Liquidity '+usd(x.liquidity_usd)+' · 24h volume '+usd(x.volume_24h_usd)+'</small>'+tokenActions(x.asset_id)+'<small><a href="https://dexscreener.com/solana/'+encodeURIComponent(x.pool_address||x.asset_id)+'" target="_blank" rel="noopener noreferrer">DexScreener ↗</a> · <a href="https://solscan.io/token/'+encodeURIComponent(x.asset_id)+'" target="_blank" rel="noopener noreferrer">Solscan ↗</a></small></div></article>').join(""):'<div class="empty">No tokens are available from either public discovery feed right now. The feed will retry automatically.</div>';
+  $("launchNote").textContent=(data.note||"New pool creation is not a safety signal.")+" · Source: "+(data.source||"public feed")+(data.stale?" · showing cached data":"")+" · Updated "+new Date().toLocaleTimeString();
+ }catch(e){
+  $("launchNote").textContent="Launch feed refresh failed: "+e.message+" · Retrying automatically.";
+  if(!host.dataset.loaded)host.innerHTML='<div class="empty">The public launch feeds are temporarily unavailable. This panel will retry automatically; refresh to try now.</div>';
+ }finally{host.dataset.loading="0";button.disabled=false;}
+}
+async function request(path,options={}){
+ const headers={"Content-Type":"application/json",...(options.headers||{})};
+ if(options.method&&options.method!=="GET"&&csrf)headers["X-CSRF-Token"]=csrf;
+ let response;
+ try{response=await fetch(path,{...options,credentials:"same-origin",headers});}
+ catch(error){
+  if(location.protocol==="file:")throw new Error("This page is open as a local file. Open https://signalforce-qwat.onrender.com in Chrome to sign in.");
+  throw new Error("Could not reach "+location.origin+path+". The server may be waking up, or the connection was interrupted. "+(error&&error.message?error.message:"Network request failed"));
+ }
+ let data={};try{data=await response.json()}catch(_){}
+ if(!response.ok)throw new Error(data.detail||"Request failed ("+response.status+")");
+ return data;
+}
 function message(id,text,error=false){const el=$(id);el.textContent=text;el.classList.remove("hidden");el.classList.toggle("error",error)}
 function setMode(next){mode=next;$("loginTab").classList.toggle("primary",mode==="login");$("registerTab").classList.toggle("primary",mode==="register");$("authSubmit").textContent=mode==="login"?"Sign in securely":"Create my account";$("password").autocomplete=mode==="login"?"current-password":"new-password";$("password").minLength=mode==="register"?12:1;$("authHelp").textContent=mode==="login"?"Enter the same email address and password you used when creating your account." :"Enter your email and create a password with at least 12 characters. Your account will be ready immediately—no email confirmation is needed."; $("authMessage").classList.add("hidden")}
-$("loginTab").onclick=()=>setMode("login");$("registerTab").onclick=()=>setMode("register");
+$("loginTab").onclick=()=>setMode("login");$("registerTab").onclick=()=>setMode("register");$("togglePassword").onclick=()=>{const input=$("password"),show=input.type==="password";input.type=show?"text":"password";$("togglePassword").textContent=show?"Hide":"Show";$("togglePassword").setAttribute("aria-label",show?"Hide password":"Show password");};
 $("authForm").onsubmit=async e=>{e.preventDefault();$("authSubmit").disabled=true;try{if(mode==="register"){const r=await request("/v1/customer/register",{method:"POST",body:JSON.stringify({email:$("email").value,password:$("password").value})});csrf=r.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);await loadWorkspace();message("notice","Account created successfully. You're signed in.");return;}const r=await request("/v1/customer/login",{method:"POST",body:JSON.stringify({email:$("email").value,password:$("password").value})});csrf=r.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);await loadWorkspace();}catch(err){message("authMessage",err.message,true);}finally{$("authSubmit").disabled=false}};
 
-async function loadWorkspace(){const me=await request("/v1/customer/me");const csrfData=await request("/v1/customer/csrf");csrf=csrfData.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);$("authView").classList.add("hidden");$("workspace").classList.remove("hidden");$("signedEmail").textContent=me.email;await loadPaperTrader();await loadFomoCopilot()}
+async function loadWorkspace(){const me=await request("/v1/customer/me");const csrfData=await request("/v1/customer/csrf");csrf=csrfData.csrf_token;sessionStorage.setItem("sf_customer_csrf",csrf);$("authView").classList.add("hidden");$("workspace").classList.remove("hidden");$("workspace").before($("launchSection"));$("entryLayout").classList.add("hidden");$("signedEmail").textContent=me.email;await loadPaperTrader();await loadFomoCopilot()}
 let traderAccount=null,newSessionRequested=false;
 async function loadPaperTrader(){
  const data=await request("/v1/customer/paper-trader");traderAccount=data.paper_trader;
@@ -173,9 +214,9 @@ async function loadPaperTrader(){
  $("targetProgress").style.width=Math.min(100,Math.max(0,a.target_progress_pct))+"%";
  $("pauseTrader").textContent=a.is_running?"Pause trader":a.auto_status==="target_reached"?"Start a new paper session":"Resume / update settings";
  $("pauseTrader").disabled=false;
- $("positionRows").innerHTML=a.positions.length?a.positions.map(p=>'<tr><td>'+esc(p.token_name||p.asset_id)+'</td><td>'+Number(p.quantity).toFixed(6)+'</td><td>'+usd(p.average_entry_price)+'</td><td>'+usd(p.last_price||p.average_entry_price)+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">No open positions yet.</td></tr>';
+ $("positionRows").innerHTML=a.positions.length?a.positions.map(p=>'<tr><td>'+esc(p.token_name||p.asset_id)+tokenActions(p.asset_id)+'</td><td>'+Number(p.quantity).toFixed(6)+'</td><td>'+usd(p.average_entry_price)+'</td><td>'+usd(p.last_price||p.average_entry_price)+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">No open positions yet.</td></tr>';
  const trades=await request("/v1/customer/paper-accounts/"+encodeURIComponent(a.id)+"/trades");
- $("tradeRows").innerHTML=trades.trades.length?trades.trades.slice(0,12).map(t=>'<tr><td>'+esc(t.side.toUpperCase())+'</td><td>'+esc(t.token_name||t.asset_id)+'</td><td>'+usd(t.amount_usd)+'</td><td>'+(t.realized_pnl_usd==null?"—":usd(t.realized_pnl_usd))+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">No trades yet.</td></tr>';
+ $("tradeRows").innerHTML=trades.trades.length?trades.trades.slice(0,12).map(t=>'<tr><td>'+esc(t.side.toUpperCase())+'</td><td>'+esc(t.token_name||t.asset_id)+tokenActions(t.asset_id)+'</td><td>'+usd(t.amount_usd)+'</td><td>'+(t.realized_pnl_usd==null?"—":usd(t.realized_pnl_usd))+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">No trades yet.</td></tr>';
 }
 function showWorkspaceTab(tab){
  const isFomo=tab==="fomo";
@@ -193,7 +234,7 @@ async function loadFomoCallouts(){
  try{
   const data=await request("/v1/customer/fomo-copilot/callouts?limit=50");
   const rows=data.callouts||[];
-  status.textContent="SCAN COMPLETE · "+rows.length+" candidates · "+data.scanned_assets+" assets checked · "+(data.gecko_terminal_new_pools_seen||0)+" new pools seen · "+data.source+" · "+fomoStamp(data.generated_at);
+  const scanned=Number(data.scanned_assets||0);\n  status.textContent=(scanned===0?"SCAN INPUT EMPTY · ":"SCAN COMPLETE · ")+rows.length+" candidates · "+scanned+" assets evaluated · "+(data.gecko_terminal_new_pools_seen||0)+" new pools seen · "+data.source+" · "+fomoStamp(data.generated_at);
   status.classList.remove("error");
   host.innerHTML=rows.length?rows.map(x=>{
    const change=x.change_5m_pct===null?"n/a":Number(x.change_5m_pct).toFixed(1)+"%";
@@ -202,8 +243,8 @@ async function loadFomoCallouts(){
    const ownLabel=own?'Your FOMO history: '+own.swap_count+' matching swap records'+(own.sides&&own.sides.length?' ('+own.sides.join('/')+')':''):'No matching swap in your imported FOMO history';
    const qualified=x.qualified_trader_activity;
    const qualifiedLabel=qualified?'Recent FOMO-qualified buys: '+qualified.buy_count+' · '+(qualified.traders||[]).join(', ')+' · Not chain-verified':'No fresh buy observed from a qualified FOMO leaderboard account';
-   return '<article class="launch-card"><div style="min-width:0;width:100%"><strong>'+esc(x.name)+' <span class="muted">'+esc(x.symbol)+'</span> · '+esc(x.tier.toUpperCase())+' '+esc(x.score)+'/100</strong><small>'+esc(x.asset_id)+'</small><small class="launch-meta">Price '+usd(x.price_usd)+' · Liquidity '+usd(x.liquidity_usd)+' · 1h volume '+usd(x.volume_1h_usd)+'</small><small>5m change '+esc(change)+' · Buys '+esc(x.buys_5m)+' / sells '+esc(x.sells_5m)+' · observation '+esc(age)+'m old</small><small>'+esc((x.reasons||[]).join(' · '))+'</small><small>'+esc(ownLabel)+'</small><small>'+esc(qualifiedLabel)+'</small><small><a href="'+esc(x.fomo_phone_url)+'" target="_blank" rel="noopener noreferrer">FOMO app ↗</a> · <a href="'+esc(x.fomo_web_url)+'" target="_blank" rel="noopener noreferrer">FOMO web ↗</a></small><small><a href="'+esc(x.market_url)+'" target="_blank" rel="noopener noreferrer">DexScreener ↗</a> · <a href="'+esc(x.solscan_url)+'" target="_blank" rel="noopener noreferrer">Solscan ↗</a> · <button type="button" class="btn" data-copy-mint="'+esc(x.asset_id)+'">Copy contract</button></small><small class="small">Watchlist only — no entry, stop or targets. Verify the token and slippage before deciding anything.</small></div></article>';
-  }).join(""):'<div class="empty">No assets passed the current freshness, liquidity and volume filters. This is normal; filters are not relaxed to force signals.</div>';
+   return '<article class="launch-card"><div style="min-width:0;width:100%"><strong>'+esc(x.name)+' <span class="muted">'+esc(x.symbol)+'</span> · '+esc(x.tier.toUpperCase())+' '+esc(x.score)+'/100</strong><small>'+esc(x.asset_id)+'</small>'+tokenActions(x.asset_id)+'<small class="launch-meta">Price '+usd(x.price_usd)+' · Liquidity '+usd(x.liquidity_usd)+' · 1h volume '+usd(x.volume_1h_usd)+'</small><small>5m change '+esc(change)+' · Buys '+esc(x.buys_5m)+' / sells '+esc(x.sells_5m)+' · observation '+esc(age)+'m old</small><small>'+esc((x.reasons||[]).join(' · '))+'</small><small>'+esc(ownLabel)+'</small><small>'+esc(qualifiedLabel)+'</small><small><a href="'+esc(x.fomo_phone_url)+'" target="_blank" rel="noopener noreferrer">FOMO app ↗</a> · <a href="'+esc(x.fomo_web_url)+'" target="_blank" rel="noopener noreferrer">FOMO web ↗</a></small><small><a href="'+esc(x.market_url)+'" target="_blank" rel="noopener noreferrer">DexScreener ↗</a> · <a href="'+esc(x.solscan_url)+'" target="_blank" rel="noopener noreferrer">Solscan ↗</a> · <button type="button" class="btn" data-copy-mint="'+esc(x.asset_id)+'">Copy contract</button></small><small class="small">Watchlist only — no entry, stop or targets. Verify the token and slippage before deciding anything.</small></div></article>';
+  }).join(""):(scanned===0?'<div class="empty">No eligible token inputs reached the scanner this cycle, so no assets were evaluated. Check the discovery feed and imported FOMO activity; filters were not evaluated.</div>':'<div class="empty">Assets were evaluated, but none passed the current freshness, liquidity and volume filters. Filters are not relaxed to force signals.</div>');
   host.querySelectorAll("[data-copy-mint]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.getAttribute("data-copy-mint"));button.textContent="Copied";}catch(_){button.textContent="Copy unavailable";}}));
   const context=data.fomo_context||{};
   status.textContent+=" · Your swaps: "+(context.connected_spot_swap_snapshot?context.observed_spot_swaps:"not connected")+" · FOMO leaderboard windows: "+((context.trader_leaderboard_windows||[]).join(", ")||"not captured")+" · Qualified traders: "+(context.leaderboard_qualified_traders??0)+" · Recent qualified buys: "+(context.fresh_qualified_trader_buys??0);
@@ -238,13 +279,13 @@ async function loadCopytopFeed(){
   status.textContent="COPY.TOP "+(failures.length?"PARTIAL FEED · "+failures.join(" · "):"LIVE FEED CONNECTED")+" · "+tradeRows.length+" trades · "+leaderRows.length+" traders · refreshed "+providerTime(data.generated_at);
   status.classList.toggle("error",failures.length>0);
   $("providerAlerts").innerHTML=alertRows.length?alertRows.slice(0,20).map(x=>{
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(String(x.kind||"alert").replaceAll("_"," ").toUpperCase())+' · '+esc(x.symbol||"?")+' · '+esc(x.trader_count??"—")+' traders</strong><small style="display:block;color:#91a0ad">'+esc(x.summary||"Provider-reported trader activity")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small><small>'+esc((x.traders||[]).join(", "))+'</small>'+(x.mint?'<small class="mono">'+esc(x.mint)+'</small><small><button class="btn" type="button" data-provider-open="'+esc(x.mint)+'">Copy contract + open FOMO</button></small>':'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div>';
+   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(String(x.kind||"alert").replaceAll("_"," ").toUpperCase())+' · '+esc(x.symbol||"?")+' · '+esc(x.trader_count??"—")+' traders</strong><small style="display:block;color:#91a0ad">'+esc(x.summary||"Provider-reported trader activity")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small><small>'+esc((x.traders||[]).join(", "))+'</small>'+(x.mint?'<small class="mono">'+esc(x.mint)+'</small>'+tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div>';
   }).join(""):'<div class="empty">'+esc(errors.alerts||"No recent confluence or big-trade events passed the provider thresholds.")+'</div>';
 
   tradesHost.innerHTML=tradeRows.length?tradeRows.slice(0,20).map(x=>{
    const side=String(x.side||"unknown").toUpperCase();
-   const mint=x.mint?'<small class="mono">'+esc(x.mint)+'</small>':"";
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(x.handle)+' · '+esc(side)+' '+esc(x.symbol||"?")+'</strong><small style="display:block;color:#91a0ad">'+esc(x.token_name||"")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small>'+mint+(x.mint?'<small><button class="btn" type="button" data-provider-open="'+esc(x.mint)+'">Copy contract + open FOMO</button></small>':'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div>';
+   const mint=x.mint?'<small class="mono">'+esc(x.mint)+'</small>'+tokenActions(x.mint):"";
+   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(x.handle)+' · '+esc(side)+' '+esc(x.symbol||"?")+'</strong><small style="display:block;color:#91a0ad">'+esc(x.token_name||"")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small>'+mint+(x.mint?tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div>';
   }).join(""):'<div class="empty">'+esc(errors.live_trades||"No recent trades returned for the current FOMO leaderboard watchlist.")+'</div>';
   leaderHost.innerHTML=leaderRows.length?leaderRows.slice(0,20).map((x,i)=>{
    const fair=String(x.fair_play||"not reported").replaceAll("_"," ");
@@ -252,13 +293,8 @@ async function loadCopytopFeed(){
   }).join(""):'<div class="empty">'+esc(errors.leaderboard||"No FOMO leaderboard rows returned.")+'</div>';
   hotHost.innerHTML=hotRows.length?hotRows.slice(0,15).map(x=>{
    const scope=x.platform_scope||"platform scope not confirmed";
-   return '<article class="launch-card"><div style="min-width:0"><strong>'+esc(x.name||x.symbol||"Unknown token")+' <span class="muted">'+esc(x.symbol||"")+'</span></strong><small class="mono">'+esc(x.mint||"Contract not supplied")+'</small><small class="launch-meta">Traders '+esc(x.trader_count??"—")+' · Bought '+esc(providerMoney(x.bought_usd))+' · Sold '+esc(providerMoney(x.sold_usd))+'</small><small>Market cap '+esc(providerMoney(x.market_cap_usd))+' · '+esc(scope)+'</small><small>'+esc((x.traders||[]).join(", ")||"Trader handles not supplied")+'</small>'+(x.mint?'<small><button class="btn" type="button" data-provider-open="'+esc(x.mint)+'">Copy contract + open FOMO</button></small>':'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div></article>';
+   return '<article class="launch-card"><div style="min-width:0"><strong>'+esc(x.name||x.symbol||"Unknown token")+' <span class="muted">'+esc(x.symbol||"")+'</span></strong><small class="mono">'+esc(x.mint||"Contract not supplied")+'</small><small class="launch-meta">Traders '+esc(x.trader_count??"—")+' · Bought '+esc(providerMoney(x.bought_usd))+' · Sold '+esc(providerMoney(x.sold_usd))+'</small><small>Market cap '+esc(providerMoney(x.market_cap_usd))+' · '+esc(scope)+'</small><small>'+esc((x.traders||[]).join(", ")||"Trader handles not supplied")+'</small>'+(x.mint?tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div></article>';
   }).join(""):'<div class="empty">'+esc(errors.hot_coins||"No hot-coin rows returned.")+'</div>';
-  document.querySelectorAll("[data-provider-open]").forEach(button=>button.addEventListener("click",async()=>{
-   const mint=button.getAttribute("data-provider-open");
-   window.open("https://fomo.family/discover","_blank","noopener");
-   try{await navigator.clipboard.writeText(mint);button.textContent="Contract copied · paste in FOMO search";}catch(_){button.textContent="FOMO opened · copy address above";}
-  }));
  }catch(error){
   status.textContent="Copy.top feed unavailable: "+error.message;
   status.classList.add("error");
@@ -328,6 +364,22 @@ $("paperTraderForm").onsubmit=async e=>{e.preventDefault();$("startTrader").disa
 $("pauseTrader").onclick=async()=>{if(!traderAccount)return;if(traderAccount.is_running){try{await request("/v1/customer/paper-trader/pause",{method:"POST",body:"{}"});await loadPaperTrader();message("notice","Your paper trader is paused. You can now start a new session with a different balance.")}catch(e){message("notice",e.message,true)}}else{newSessionRequested=false;$("paperSetup").classList.remove("hidden");$("paperDashboard").classList.add("hidden");$("traderCapital").value=traderAccount.starting_capital_usd;$("traderCapital").disabled=false;$("capitalHelp").textContent="Your starting balance for this session.";$("traderTarget").value=traderAccount.profit_target_usd;$("traderMode").value=traderAccount.strategy_profile||traderAccount.strategy_mode;$("newSessionWarning").classList.add("hidden");$("startTrader").textContent="Resume paper trader"}};
 $("newSession").onclick=()=>{if(!traderAccount)return;if(traderAccount.is_running){message("notice","Pause the trader first, then start a new session to change the balance.",true);return;}newSessionRequested=true;$("paperDashboard").classList.add("hidden");$("paperSetup").classList.remove("hidden");$("traderCapital").disabled=false;$("traderCapital").value=traderAccount.starting_capital_usd;$("traderTarget").value=traderAccount.profit_target_usd;$("traderMode").value=traderAccount.strategy_profile||traderAccount.strategy_mode;$("capitalHelp").textContent="Choose a new virtual starting balance. Previous session results stay in your trade history.";$("newSessionWarning").classList.remove("hidden");$("startTrader").textContent="Start new paper session"};
 $("logout").onclick=async()=>{try{await request("/v1/customer/logout",{method:"POST"})}catch(_){}csrf="";sessionStorage.removeItem("sf_customer_csrf");location.reload()};
+
+function tokenActions(mint){
+ const value=String(mint||"").trim();
+ if(!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value))return '<small class="muted">No verified Solana contract · token links unavailable</small>';
+ const encoded=encodeURIComponent(value);
+ return '<small class="coin-actions"><a href="https://pump.fun/coin/'+encoded+'" target="_blank" rel="noopener noreferrer">pump.fun ↗</a> · <button class="btn" type="button" data-open-fomo="'+esc(value)+'">Copy CA + open FOMO</button></small>';
+}
+document.addEventListener("click",async event=>{
+ const button=event.target.closest("[data-open-fomo]");
+ if(!button)return;
+ const mint=button.getAttribute("data-open-fomo");
+ window.open("https://fomo.family/discover","_blank","noopener");
+ try{await navigator.clipboard.writeText(mint);button.textContent="Copied · paste in FOMO search";}
+ catch(_){button.textContent="FOMO opened · copy contract above";}
+});
+
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}function usd(v){return "$"+Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2})}
 $("refreshLaunches").onclick=loadLaunches;loadLaunches();setInterval(loadLaunches,90000);setInterval(()=>{if(!$("workspace").classList.contains("hidden"))loadPaperTrader().catch(()=>{})},15000);setInterval(()=>{if(!$("workspace").classList.contains("hidden")&&!$("fomoCopilotPanel").classList.contains("hidden"))loadFomoCopilot().catch(()=>{})},30000);
 (async()=>{try{await loadWorkspace()}catch(_){$("authView").classList.remove("hidden")}})();
