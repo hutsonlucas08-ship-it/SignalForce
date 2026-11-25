@@ -414,6 +414,17 @@ async function loadCopytopFeed(){
  }finally{refreshButton.dataset.loading="0";refreshButton.disabled=false;}
 }
 $("refreshProviderFeed").onclick=loadCopytopFeed;
+// Keep the FOMO radar current while its tab is open; provider responses are cached server-side.
+setInterval(()=>{
+ if(!$("workspace").classList.contains("hidden")&&!$("fomoCopilotPanel").classList.contains("hidden")){
+  loadCopytopFeed().catch(()=>{});
+ }
+},15000);
+setInterval(()=>{
+ if(!$("workspace").classList.contains("hidden")&&!$("fomoCopilotPanel").classList.contains("hidden")){
+  loadFomoCallouts().catch(()=>{});
+ }
+},30000);
 
 async function loadFomoCopilot(){
  const status=$("fomoConnectionStatus"),host=$("fomoSnapshotList");
