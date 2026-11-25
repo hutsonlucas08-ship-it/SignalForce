@@ -14,6 +14,7 @@ from .db import connect, utcnow
 
 log = logging.getLogger("signalforce.customer_paper_bot")
 log.setLevel(logging.INFO)
+_telegram_config_warning_logged = False
 RISK_MONITOR_INTERVAL_SECONDS = 5.0
 STRATEGY_SCAN_INTERVAL_SECONDS = 30.0
 MARKET_ONLY_MIN_SCORE = 50.0
@@ -38,6 +39,10 @@ async def _send_customer_trade_alerts(client, conn, after_trade_id):
     token = __import__("os").getenv("TELEGRAM_BOT_TOKEN")
     chat_id = __import__("os").getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
+        global _telegram_config_warning_logged
+        if not _telegram_config_warning_logged:
+            log.warning("Customer paper Telegram alerts disabled: missing TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID")
+            _telegram_config_warning_logged = True
         return 0
     rows = conn.execute(
         """SELECT t.id,t.token_name,t.asset_id,t.side,t.amount_usd,t.price_usd,
@@ -627,6 +632,8 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                         last_strategy_scan = now_mono
                     else:
                         log.info("Customer fast risk check: %s", risk_summary)
+                    # Send alerts for trades from strategy scans and fast risk exits.
+                    await _send_customer_trade_alerts(client, conn, before_trade_id)
                 elif enabled:
                     lease = conn.execute(
                         "SELECT lock_until_epoch FROM customer_paper_bot_state WHERE id=1"
