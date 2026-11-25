@@ -27,7 +27,7 @@ def test_rejects_untrusted_post_url_and_non_solana_contracts():
         "tweetUrl": "https://phishing.example/alpha/status/123",
         "contractAddress": "0x0000000000000000000000000000000000000000",
     })
-    assert item["url"] is None
+    assert item["url"] == "https://x.com/alpha/status/123456789"
     assert item["contracts"] == []
 
 
