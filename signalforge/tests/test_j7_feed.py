@@ -27,7 +27,7 @@ def test_rejects_untrusted_post_url_and_non_solana_contracts():
         "tweetUrl": "https://phishing.example/elonmusk/status/123",
         "contractAddress": "0x0000000000000000000000000000000000000000",
     })
-    assert item["url"] == "https://x.com/alpha/status/123456789"
+    assert item["url"] == "https://x.com/elonmusk/status/123456789"
     assert item["contracts"] == []
 
 
@@ -35,7 +35,7 @@ def test_token_meta_can_attach_to_existing_post():
     from app import j7_feed
     j7_feed._EVENTS.clear()
     j7_feed._PENDING_META.clear()
-    _upsert({"id": "123456789", "author": {"handle": "alpha"}, "text": "mint"})
+    _upsert({"id": "123456789", "author": {"handle": "elonmusk"}, "text": "mint"})
     j7_feed._token_meta({"id": "123456789", "mint": SOL_MINT, "tokenMeta": {"symbol": "ABC"}})
     assert snapshot()["events"][0]["contracts"] == [SOL_MINT]
 
