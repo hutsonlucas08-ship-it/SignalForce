@@ -97,11 +97,12 @@ async def _send_customer_telegram_connection_test(client):
     if not token or not chat_id:
         log.warning("Customer paper Telegram connection test skipped: required environment variables are missing")
         return False
+    log.info("Customer paper Telegram connection test starting")
     try:
-        response = await client.post(
+        response = await asyncio.wait_for(client.post(
             "https://api.telegram.org/bot" + token + "/sendMessage",
             json={"chat_id": chat_id, "text": "SignalForce Telegram connection test: customer paper-trade alerts are enabled. Paper trading only; no real funds moved.", "disable_web_page_preview": True},
-        )
+        ), timeout=5.0)
         try:
             payload = response.json()
         except (ValueError, TypeError):
@@ -111,6 +112,8 @@ async def _send_customer_telegram_connection_test(client):
             return True
         description = payload.get("description") if isinstance(payload, dict) else None
         log.warning("Customer paper Telegram connection test rejected (HTTP %s): %s", response.status_code, str(description or "no provider detail")[:180])
+    except asyncio.TimeoutError:
+        log.warning("Customer paper Telegram connection test timed out after 5 seconds")
     except httpx.HTTPError as exc:
         log.warning("Customer paper Telegram connection test failed (%s)", type(exc).__name__)
     return False
