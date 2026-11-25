@@ -241,6 +241,29 @@ async def run_feed(stop_event: asyncio.Event, jwt: str) -> None:
         while len(_EVENTS) > _MAX_EVENTS:
             _EVENTS.popitem(last=True)
 
+    @client.on("follow_scan")
+    async def follow_scan(item):
+        if not isinstance(item, dict):
+            return
+        event_id = str(item.get("id") or "")
+        event = _EVENTS.get(event_id)
+        if not event or event.get("kind") != "follow_update":
+            return
+        scan = item.get("scan") if isinstance(item.get("scan"), dict) else {}
+        contracts = scan.get("contracts") if isinstance(scan.get("contracts"), dict) else {}
+        rows = contracts.get("rows") if isinstance(contracts.get("rows"), list) else []
+        found = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            mint = row.get("ca")
+            chain = str(row.get("chain") or "").lower()
+            if chain in ("sol", "solana") and is_solana_mint(mint) and mint not in found:
+                found.append(mint)
+        event["contracts"] = list(dict.fromkeys((event.get("contracts") or []) + found))[:5]
+        event["scan_status"] = "indexing" if contracts.get("indexing") else ("matched" if found else "no_contract_found")
+        event["observed_at"] = datetime.now(timezone.utc).isoformat()
+
     @client.on("profile_update")
     async def profile_update(item):
         if not isinstance(item, dict):
