@@ -33,6 +33,58 @@ MODE_RULES = {
 }
 
 
+async def _send_customer_trade_alerts(client, conn, after_trade_id):
+    """Send Telegram alerts for customer paper trades created in this worker cycle."""
+    token = __import__("os").getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = __import__("os").getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return 0
+    rows = conn.execute(
+        """SELECT t.id,t.token_name,t.asset_id,t.side,t.amount_usd,t.price_usd,
+                  t.realized_pnl_usd,t.reason,a.account_id
+           FROM customer_paper_trades t
+           JOIN customer_paper_accounts a ON a.id=t.paper_account_id
+           WHERE t.id>? ORDER BY t.id""",
+        (int(after_trade_id),),
+    ).fetchall()
+    sent_count = 0
+    for row in rows:
+        trade = dict(row)
+        side = str(trade.get("side") or "").upper()
+        label = trade.get("token_name") or str(trade.get("asset_id") or "")[:10]
+        lines = [
+            "SIGNALFORGE CUSTOMER PAPER " + side,
+            str(label),
+            "Amount: $" + str(round(float(trade.get("amount_usd") or 0), 2)),
+            "Price: $" + str(trade.get("price_usd") or "n/a"),
+        ]
+        if side == "SELL":
+            lines.append("Realized paper P&L: $" + str(round(float(trade.get("realized_pnl_usd") or 0), 2)))
+        if trade.get("reason"):
+            lines.append("Reason: " + str(trade["reason"])[:180])
+        lines.append("Simulation only · no real funds moved.")
+        try:
+            response = await client.post(
+                "https://api.telegram.org/bot" + token + "/sendMessage",
+                json={"chat_id": chat_id, "text": "\\n".join(lines), "disable_web_page_preview": True},
+            )
+            try:
+                payload = response.json()
+            except (ValueError, TypeError):
+                payload = {}
+            if response.is_success and isinstance(payload, dict) and payload.get("ok"):
+                sent_count += 1
+            else:
+                description = payload.get("description") if isinstance(payload, dict) else None
+                log.warning("Customer paper Telegram alert rejected (HTTP %s): %s",
+                            response.status_code, str(description or "no provider detail")[:180])
+        except httpx.HTTPError as exc:
+            log.warning("Customer paper Telegram alert delivery failed (%s)", type(exc).__name__)
+    if rows:
+        log.info("Customer paper Telegram alerts: %s sent from %s new trade(s)", sent_count, len(rows))
+    return sent_count
+
+
 def _number(value, default=0.0):
     try:
         number = float(value)
@@ -537,7 +589,7 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                         _keep_worker_lease_alive(db_path, database_url, worker_id, stop_event)
                     )
                     log.info("Customer paper worker acquired database lease")
-                    held_rows = conn.execute(
+                    before_trade_id = conn.execute("SELECT COALESCE(MAX(id),0) FROM customer_paper_trades").fetchone()[0]\n                    held_rows = conn.execute(
                         """SELECT DISTINCT p.asset_id
                            FROM customer_paper_positions p
                            JOIN customer_paper_accounts a ON a.id=p.paper_account_id
