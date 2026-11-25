@@ -146,8 +146,6 @@ def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
             "age_seconds": int(age),
             "market_url": "https://dexscreener.com/solana/" + str(pair.get("pairAddress") or mint),
             "solscan_url": "https://solscan.io/token/" + mint,
-            "fomo_phone_url": "https://fomo.family",
-            "fomo_web_url": "https://fomo.family/discover",
             "plan_status": "market_watch_only",
             "entry": None,
             "stop": None,
