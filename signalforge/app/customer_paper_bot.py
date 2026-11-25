@@ -589,7 +589,8 @@ async def run_customer_paper_bot(db_path, database_url, stop_event):
                         _keep_worker_lease_alive(db_path, database_url, worker_id, stop_event)
                     )
                     log.info("Customer paper worker acquired database lease")
-                    before_trade_id = conn.execute("SELECT COALESCE(MAX(id),0) FROM customer_paper_trades").fetchone()[0]\n                    held_rows = conn.execute(
+                    before_trade_id = conn.execute("SELECT COALESCE(MAX(id),0) FROM customer_paper_trades").fetchone()[0]
+                    held_rows = conn.execute(
                         """SELECT DISTINCT p.asset_id
                            FROM customer_paper_positions p
                            JOIN customer_paper_accounts a ON a.id=p.paper_account_id
