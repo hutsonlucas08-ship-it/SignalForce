@@ -1352,7 +1352,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         if isinstance(item, dict)
                         and str(item.get("chainId") or "").lower() == "solana"
                         and isinstance(item.get("tokenAddress"), str)
-                    ][:30]
+                    ][:60]
                     pairs = []
                     if addresses:
                         pair_response = await client.get(
@@ -1364,7 +1364,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                         pair_payload = pair_response.json()
                         if isinstance(pair_payload, list):
                             pairs = pair_payload
-                launches = launch_feed.normalize_dexscreener_latest(profiles, pairs, limit=10)
+                launches = launch_feed.normalize_dexscreener_latest(profiles, pairs, limit=30)
                 if launches:
                     result = {
                         "launches": launches,
