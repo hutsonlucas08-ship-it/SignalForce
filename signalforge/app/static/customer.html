@@ -109,6 +109,26 @@ td{color:#dce7ed}
  #xCalloutsCard{height:70vh;border-radius:13px}
 }
 
+
+/* Compact 10-slot coin radar: scan-first, details on demand. */
+.radar-section .head{margin-bottom:10px;align-items:center}
+.radar-section .head p{font-size:11px}
+.radar-status{font-size:11px;color:#91a0ad;padding:7px 0}
+.radar-list{display:flex;flex-direction:column;gap:6px}
+.radar-row{display:flex;align-items:center;gap:10px;min-width:0;padding:9px 10px;border:1px solid #263847;border-radius:9px;background:#0b141d}
+.radar-rank{width:22px;flex:0 0 22px;color:#8296a6;font-size:11px;text-align:center}
+.radar-main{flex:1;min-width:0}
+.radar-main strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.radar-main small{display:block;font-size:10px;color:#91a0ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.radar-score{font-size:12px;font-weight:800;color:var(--green)}
+.radar-empty{opacity:.62}
+.radar-actions{margin-top:4px}
+.radar-actions .coin-actions{margin-top:0}
+.radar-actions .coin-actions a,.radar-actions .coin-actions button{font-size:10px;padding:3px 7px}
+#providerAlerts{display:flex;flex-direction:column;gap:5px}
+#providerLiveTrades,#providerLeaderboard{max-height:460px;overflow:auto}
+#providerHotCoins{display:flex;flex-direction:column;gap:5px}
+
 </style></head><body><div class="wrap">
 <header class="top"><div class="brand"><div class="mark">S</div><div><strong>SIGNALFORCE</strong><small>Customer workspace</small></div></div><div class="actions"><span class="pill">CUSTOMER PAPER DESK</span><span class="tag">PAPER ONLY · NO WALLET SIGNING</span></div></header>
 <div id="entryLayout" class="entry-layout"><section id="launchSection" class="card launch-section"><div class="launch-heading"><div><div class="eyebrow">LIVE SOLANA DISCOVERY</div><h2>Fresh launches</h2><p>Newest pools first · GeckoTerminal with DexScreener backup</p></div><button class="btn" id="refreshLaunches">Refresh</button></div><div id="launchFeed" class="launch-grid"><div class="empty">Loading newest Solana launches…</div></div><p class="small" id="launchNote">New pool creation is a discovery signal, not proof of legitimacy or safety. Always review liquidity, holders, authorities and trading activity.</p></section>
@@ -163,17 +183,17 @@ td{color:#dce7ed}
    <p>Live public FOMO trader activity, independent Solana market checks, and optional private snapshots from your local FOMO bridge. You execute trades yourself.</p><p class="small">The public Copy.top leaderboard, live tape and confluence alerts load automatically. The local bridge is optional: it imports your own FOMO activity and passively captures FOMO leaderboard windows. To use it, keep the bridge running and open FOMO → Leaderboard → Traders in the same Chrome window; switch through 24h, 7d and 30d. It never clicks or places trades.</p></div>
    <span class="pill">MANUAL EXECUTION ONLY</span>
   </div>
-  <div class="card" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual trade callouts</h2><p>Fresh market candidates for your review. These are watchlist ideas, not buy orders.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="message">Waiting for market scan…</div><div id="calloutList" class="launch-grid"><div class="empty">Run a scan to find fresh candidates.</div></div><p class="small">Only assets with recent observations, at least $25,000 reported liquidity, and at least $10,000 reported 1h volume are considered. The 0–100 score is a rule-based screening score, not a win probability. Entry, stop and targets are intentionally withheld until a validated trade-plan model exists. No orders are placed.</p></div>
+  <div class="card radar-section" style="margin:12px 0"><div class="head"><div><div class="eyebrow">INDEPENDENT SOLANA SCANNER</div><h2>Manual Callouts <span class="pill">TOP 10</span></h2><p>Fresh Solana coins to check on Axiom.</p></div><button class="btn primary" id="refreshCallouts" type="button">Scan now</button></div><div id="calloutStatus" class="radar-status">Scanning market…</div><div id="calloutList" class="radar-list"><div class="empty">Waiting for candidates…</div></div></div>
   <div class="card" style="margin:12px 0">
-   <div class="head"><div><div class="eyebrow">INDEPENDENT FOMO DATA PROVIDER</div><h2>Live FOMO intelligence · Copy.top</h2><p>Public leaderboard and live activity for FOMO traders. This is a separate provider feed, not your private FOMO session.</p></div><button class="btn primary" id="refreshProviderFeed" type="button">Refresh live feed</button></div>
+   <div class="head"><div><div class="eyebrow">INDEPENDENT FOMO DATA PROVIDER</div><h2>Live FOMO Intelligence <span class="pill">TOP 10</span></h2><p>Trending coins and recent FOMO trader activity.</p></div><button class="btn primary" id="refreshProviderFeed" type="button">Refresh</button></div>
    <div id="providerFeedStatus" class="message">Connecting to the independent FOMO data provider…</div>
    <div class="grid">
-    <div class="card wide"><div class="eyebrow">LIVE CONFLUENCE &amp; BIG-TRADE ALERTS</div><h3 style="font-size:14px;margin:6px 0">Strongest provider events</h3><p class="small">At least 3 tracked traders for confluence events; large-trade threshold $3,000. Provider-generated events, not a verified entry signal.</p><div id="providerAlerts"><div class="empty">Loading provider alerts…</div></div></div>
+    <div class="card wide"><div class="eyebrow">LIVE CONFLUENCE &amp; BIG-TRADE ALERTS</div><h3 style="font-size:14px;margin:6px 0">Strongest provider events</h3><div id="providerAlerts"><div class="empty">Loading provider alerts…</div></div></div>
     <div class="card"><div class="eyebrow">LIVE TRADES · FOMO WATCHLIST</div><h3 style="font-size:14px;margin:6px 0">Recent buys and sells</h3><div id="providerLiveTrades"><div class="empty">Loading live FOMO trades…</div></div></div>
     <div class="card"><div class="eyebrow">TOP FOMO TRADERS</div><h3 style="font-size:14px;margin:6px 0">7-day realized P&amp;L leaderboard</h3><div id="providerLeaderboard"><div class="empty">Loading trader leaderboard…</div></div></div>
     <div class="card wide"><div class="eyebrow">HOT COINS · 1H</div><h3 style="font-size:14px;margin:6px 0">Tokens receiving trader attention</h3><div id="providerHotCoins" class="launch-grid"><div class="empty">Loading hot coins…</div></div></div>
    </div>
-   <p class="small">Source: <a href="https://copy.top/fomo-api" target="_blank" rel="noopener noreferrer">Copy.top FOMO API</a>. Copy.top is independent of FOMO. Live trades are requested for handles on its FOMO leaderboard. Hot-coin aggregates may include other platforms unless labeled FOMO. Provider-reported activity is not independent on-chain verification. Manual execution only; no orders are placed.</p>
+   <p class="small">Copy.top public data · review every contract before trading.</p>
   </div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">FOMO TRADER QUALIFICATION</div><h3 style="font-size:14px;margin:6px 0">Leaderboard-qualified traders</h3><p class="small">Strict filters: present in at least two leaderboard windows, 55%+ win rate, 20+ trades in 7d, median hold of 15+ minutes, and no more than 40% of 7d P&amp;L from one token. Missing data never passes.</p><div id="whaleCandidates" class="launch-grid"><div class="empty">Waiting for FOMO leaderboard data.</div></div><p class="small">These are FOMO leaderboard filters, not independently chain-verified trader performance. No trader is treated as a whale signal until the evidence is validated.</p></div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">YOUR TELEGRAM BOT</div><h3 style="font-size:14px;margin:6px 0">Get callout alerts on your phone</h3><p class="small">Create a bot with Telegram's @BotFather, paste its token here, then open your bot and press Start. Your token is encrypted for your account and is never shown again.</p><div class="field"><label>Your Telegram bot token</label><input id="calloutTelegramToken" type="password" autocomplete="off" placeholder="Paste your own bot token"></div><div class="actions"><button class="btn" id="saveCalloutTelegram" type="button">Save bot token</button><button class="btn" id="discoverCalloutTelegram" type="button">Find my chat</button><button class="btn" id="testCalloutTelegram" type="button">Test connection</button><button class="btn primary" id="sendCalloutTelegram" type="button">Send top callouts</button></div><div id="calloutTelegramStatus" class="small" style="margin-top:8px">Telegram is optional. Connect your own bot to receive alerts.</div></div>
@@ -291,26 +311,18 @@ async function loadFomoCallouts(){
  const status=$("calloutStatus"),host=$("calloutList");
  try{
   const data=await request("/v1/customer/fomo-copilot/callouts?limit=100");
-  const rows=data.callouts||[];
-  const scanned=Number(data.scanned_assets||0);
-  status.textContent=(scanned===0?"SCAN INPUT EMPTY · ":"SCAN COMPLETE · ")+rows.length+" candidates · "+scanned+" assets evaluated · "+(data.gecko_terminal_new_pools_seen||0)+" new pools seen · "+data.source+" · "+fomoStamp(data.generated_at);
+  const rows=(data.callouts||[]).slice(0,10);
+  status.textContent=rows.length+" / 10 candidates · "+Number(data.scanned_assets||0)+" scanned · "+Number(data.gecko_terminal_new_pools_seen||0)+" new pools";
   status.classList.remove("error");
-  host.innerHTML=rows.length?rows.map(x=>{
-   const change=x.change_5m_pct===null?"n/a":Number(x.change_5m_pct).toFixed(1)+"%";
-   const age=Math.max(0,Math.round(Number(x.age_seconds||0)/60));
-   const own=x.your_fomo_activity;
-   const ownLabel=own?'Your FOMO history: '+own.swap_count+' matching swap records'+(own.sides&&own.sides.length?' ('+own.sides.join('/')+')':''):'No matching swap in your imported FOMO history';
-   const qualified=x.qualified_trader_activity;
-   const qualifiedLabel=qualified?'Recent FOMO-qualified buys: '+qualified.buy_count+' · '+(qualified.traders||[]).join(', ')+' · Not chain-verified':'No fresh buy observed from a qualified FOMO leaderboard account';
-   return '<article class="launch-card"><div style="min-width:0;width:100%"><strong>'+esc(x.name)+' <span class="muted">'+esc(x.symbol)+'</span> · '+esc(x.tier.toUpperCase())+' '+esc(x.score)+'/100</strong><small>'+esc(x.asset_id)+'</small>'+tokenActions(x.asset_id)+'<small class="launch-meta">Price '+usd(x.price_usd)+' · Liquidity '+usd(x.liquidity_usd)+' · 1h volume '+usd(x.volume_1h_usd)+'</small><small>5m change '+esc(change)+' · Buys '+esc(x.buys_5m)+' / sells '+esc(x.sells_5m)+' · observation '+esc(age)+'m old</small><small>'+esc((x.reasons||[]).join(' · '))+'</small><small>'+esc(ownLabel)+'</small><small>'+esc(qualifiedLabel)+'</small><small class="small">Watchlist only — no entry, stop or targets. Verify the token and slippage before deciding anything.</small></div></article>';
-  }).join(""):(scanned===0?'<div class="empty">No eligible token inputs reached the scanner this cycle, so no assets were evaluated. Check the discovery feed and imported FOMO activity; filters were not evaluated.</div>':'<div class="empty">Assets were evaluated, but none passed the current freshness, liquidity and volume filters. Filters are not relaxed to force signals.</div>');
+  host.innerHTML=Array.from({length:10},(_,i)=>{
+   const x=rows[i];
+   if(!x)return '<article class="radar-row radar-empty"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>Waiting for candidate</strong><small>More live market data needed</small></div><span class="radar-score">—</span></article>';
+   const change=x.change_5m_pct==null?"—":Number(x.change_5m_pct).toFixed(1)+"%";
+   return '<article class="radar-row"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>'+esc(x.symbol||x.name||"Unknown")+' <span class="muted">'+esc(x.name||"")+'</span></strong><small>LIQ '+usd(x.liquidity_usd)+' · VOL '+usd(x.volume_1h_usd)+' · 5M '+esc(change)+'</small><div class="radar-actions">'+tokenActions(x.asset_id)+'</div></div><span class="radar-score">'+esc(x.score)+'</span></article>';
+  }).join("");
   const context=data.fomo_context||{};
-  status.textContent+=" · Your swaps: "+(context.connected_spot_swap_snapshot?context.observed_spot_swaps:"not connected")+" · FOMO leaderboard windows: "+((context.trader_leaderboard_windows||[]).join(", ")||"not captured")+" · Qualified traders: "+(context.leaderboard_qualified_traders??0)+" · Recent qualified buys: "+(context.fresh_qualified_trader_buys??0);
-  const gate=data.whale_selection||{},qualified=gate.qualified_traders||[],whaleHost=$("whaleCandidates");
-  whaleHost.innerHTML=qualified.length?qualified.map(t=>{
-   const m=t.metrics||{};
-   return '<article class="launch-card"><div><strong>'+esc(t.handle)+'</strong><small>7d P&amp;L '+usd(m.pnl_7d)+' · Win rate '+(Number(m.win_rate)*100).toFixed(1)+'% · Trades '+esc(m.trades_7d)+'</small><small>Median hold '+esc(Number(m.median_hold_minutes).toFixed(1))+' min · Largest token P&amp;L share '+(Number(m.max_single_token_pnl_share)*100).toFixed(1)+'% · Windows '+esc((t.leaderboard_windows||[]).join(", "))+'</small><small class="small">Leaderboard-qualified only — not chain-verified.</small></div></article>';
-  }).join(""):'<div class="empty">No trader currently passes every rule. Missing win rate, trade count, median hold, token concentration, or multi-window data is a hard fail.</div>';
+  const gate=data.whale_selection||{},qualified=gate.qualified_traders||[];
+  $("whaleCandidates").innerHTML=qualified.length?qualified.slice(0,10).map(t=>'<article class="launch-card"><strong>'+esc(t.handle)+'</strong><small>7d P&amp;L '+usd((t.metrics||{}).pnl_7d)+' · win '+(Number((t.metrics||{}).win_rate||0)*100).toFixed(0)+'%</small></article>').join(""):'<div class="empty">No traders qualified from the available leaderboard evidence.</div>';
  }catch(error){status.textContent="Callout scan unavailable: "+error.message;status.classList.add("error");}
 }
 $("refreshCallouts").onclick=loadFomoCallouts;
@@ -380,35 +392,25 @@ async function loadCopytopFeed(){
  refreshButton.dataset.loading="1";refreshButton.disabled=true;
  try{
   const data=await request("/v1/customer/fomo-copilot/provider-feed");
-  const errors=data.errors||{};
-  const tradeRows=data.live_trades||[],leaderRows=data.leaderboard||[],hotRows=data.hot_coins||[];
-  const alertRows=data.alerts||[];
+  const errors=data.errors||{},tradeRows=data.live_trades||[],leaderRows=data.leaderboard||[],hotRows=data.hot_coins||[],alertRows=data.alerts||[];
   const failures=Object.values(errors).filter(Boolean);
-  status.textContent="COPY.TOP "+(failures.length?"PARTIAL FEED · "+failures.join(" · "):"LIVE FEED CONNECTED")+" · "+tradeRows.length+" trades · "+leaderRows.length+" traders · refreshed "+providerTime(data.generated_at);
+  status.textContent="LIVE "+(failures.length?"PARTIAL":"CONNECTED")+" · "+providerTime(data.generated_at);
   status.classList.toggle("error",failures.length>0);
-  $("providerAlerts").innerHTML=alertRows.length?alertRows.slice(0,50).map(x=>{
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(String(x.kind||"alert").replaceAll("_"," ").toUpperCase())+' · '+esc(x.symbol||"?")+' · '+esc(x.trader_count??"—")+' traders</strong><small style="display:block;color:#91a0ad">'+esc(x.summary||"Provider-reported trader activity")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small><small>'+esc((x.traders||[]).join(", "))+'</small>'+(x.mint?'<small class="mono">'+esc(x.mint)+'</small>'+tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div>';
-  }).join(""):'<div class="empty">'+esc(errors.alerts||"No recent confluence or big-trade events passed the provider thresholds.")+'</div>';
-
-  tradesHost.innerHTML=tradeRows.length?tradeRows.slice(0,50).map(x=>{
-   const side=String(x.side||"unknown").toUpperCase();
-   const mint=x.mint?'<small class="mono">'+esc(x.mint)+'</small>'+tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>';
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>'+esc(x.handle)+' · '+esc(side)+' '+esc(x.symbol||"?")+'</strong><small style="display:block;color:#91a0ad">'+esc(x.token_name||"")+' · '+esc(providerMoney(x.amount_usd))+' · '+esc(providerTime(x.timestamp))+'</small>'+mint+'</div>';
-  }).join(""):'<div class="empty">'+esc(errors.live_trades||"No recent trades returned for the current FOMO leaderboard watchlist.")+'</div>';
-  leaderHost.innerHTML=leaderRows.length?leaderRows.slice(0,30).map((x,i)=>{
-   const fair=String(x.fair_play||"not reported").replaceAll("_"," ");
-   return '<div style="padding:9px 0;border-bottom:1px solid #263541"><strong>#'+esc(x.rank??(i+1))+' · '+esc(x.handle)+'</strong><small style="display:block;color:#91a0ad">Realized P&amp;L '+esc(providerMoney(x.realized_pnl))+' · Win rate '+esc(providerPercent(x.win_rate))+' · Closed trades '+esc(x.closed_trades??"not reported")+'</small><small>Fair-play: '+esc(fair)+' · '+esc(x.platform||"FOMO")+'</small></div>';
-  }).join(""):'<div class="empty">'+esc(errors.leaderboard||"No FOMO leaderboard rows returned.")+'</div>';
-  hotHost.innerHTML=hotRows.length?hotRows.slice(0,30).map(x=>{
-   const scope=x.platform_scope||"platform scope not confirmed";
-   return '<article class="launch-card"><div style="min-width:0"><strong>'+esc(x.name||x.symbol||"Unknown token")+' <span class="muted">'+esc(x.symbol||"")+'</span></strong><small class="mono">'+esc(x.mint||"Contract not supplied")+'</small><small class="launch-meta">Traders '+esc(x.trader_count??"—")+' · Bought '+esc(providerMoney(x.bought_usd))+' · Sold '+esc(providerMoney(x.sold_usd))+'</small><small>Market cap '+esc(providerMoney(x.market_cap_usd))+' · '+esc(scope)+'</small><small>'+esc((x.traders||[]).join(", ")||"Trader handles not supplied")+'</small>'+(x.mint?tokenActions(x.mint):'<small class="muted">No verified contract address · FOMO link unavailable</small>')+'</div></article>';
-  }).join(""):'<div class="empty">'+esc(errors.hot_coins||"No hot-coin rows returned.")+'</div>';
+  $("providerAlerts").innerHTML=Array.from({length:10},(_,i)=>{
+   const x=alertRows[i];
+   if(!x)return '<div class="radar-row radar-empty"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>Waiting for alert</strong><small>Watching for new FOMO activity</small></div></div>';
+   return '<div class="radar-row"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>'+esc(x.symbol||x.name||"FOMO alert")+' <span class="muted">'+esc(String(x.kind||"activity").replaceAll("_"," "))+'</span></strong><small>'+esc(x.trader_count??"—")+' traders · '+providerMoney(x.amount_usd)+' · '+esc(providerTime(x.timestamp))+'</small>'+(x.mint?'<div class="radar-actions">'+tokenActions(x.mint)+'</div>':'')+'</div></div>';
+  }).join("");
+  tradesHost.innerHTML=tradeRows.length?tradeRows.slice(0,10).map((x,i)=>'<div class="radar-row"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>'+esc(x.symbol||"?")+' · '+esc(String(x.side||"swap").toUpperCase())+'</strong><small>'+esc(x.handle)+' · '+providerMoney(x.amount_usd)+' · '+esc(providerTime(x.timestamp))+'</small>'+(x.mint?'<div class="radar-actions">'+tokenActions(x.mint)+'</div>':'')+'</div></div>').join(""):'<div class="empty">'+esc(errors.live_trades||"No recent FOMO trades returned.")+'</div>';
+  leaderHost.innerHTML=leaderRows.length?leaderRows.slice(0,10).map((x,i)=>'<div class="radar-row"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>'+esc(x.handle)+'</strong><small>P&amp;L '+providerMoney(x.realized_pnl)+' · win '+providerPercent(x.win_rate)+'</small></div></div>').join(""):'<div class="empty">'+esc(errors.leaderboard||"No FOMO leaderboard rows returned.")+'</div>';
+  hotHost.innerHTML=Array.from({length:10},(_,i)=>{
+   const x=hotRows[i];
+   if(!x)return '<article class="radar-row radar-empty"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>Waiting for trending coin</strong><small>Feed has not returned another candidate</small></div></article>';
+   return '<article class="radar-row"><span class="radar-rank">'+(i+1)+'</span><div class="radar-main"><strong>'+esc(x.symbol||x.name||"Unknown")+' <span class="muted">'+esc(x.name||"")+'</span></strong><small>'+esc(x.trader_count??"—")+' traders · bought '+providerMoney(x.bought_usd)+' · sold '+providerMoney(x.sold_usd)+'</small>'+(x.mint?'<div class="radar-actions">'+tokenActions(x.mint)+'</div>':'<small>Contract unavailable</small>')+'</div></article>';
+  }).join("");
  }catch(error){
-  status.textContent="Copy.top feed unavailable: "+error.message;
-  status.classList.add("error");
-  tradesHost.innerHTML='<div class="empty">Live feed temporarily unavailable.</div>';
-  leaderHost.innerHTML='<div class="empty">Leaderboard temporarily unavailable.</div>';
-  hotHost.innerHTML='<div class="empty">Hot-coin feed temporarily unavailable.</div>';
+  status.textContent="Copy.top feed unavailable: "+error.message;status.classList.add("error");
+  tradesHost.innerHTML='<div class="empty">Live feed temporarily unavailable.</div>';leaderHost.innerHTML='<div class="empty">Leaderboard temporarily unavailable.</div>';hotHost.innerHTML='<div class="empty">Hot-coin feed temporarily unavailable.</div>';
  }finally{refreshButton.dataset.loading="0";refreshButton.disabled=false;}
 }
 $("refreshProviderFeed").onclick=loadCopytopFeed;
