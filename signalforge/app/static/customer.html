@@ -195,7 +195,6 @@ td{color:#dce7ed}
    </div>
    <p class="small">Copy.top public data · review every contract before trading.</p>
   </div>
-  <div class="card" style="margin:12px 0"><div class="eyebrow">FOMO TRADER QUALIFICATION</div><h3 style="font-size:14px;margin:6px 0">Leaderboard-qualified traders</h3><p class="small">Strict filters: present in at least two leaderboard windows, 55%+ win rate, 20+ trades in 7d, median hold of 15+ minutes, and no more than 40% of 7d P&amp;L from one token. Missing data never passes.</p><div id="whaleCandidates" class="launch-grid"><div class="empty">Waiting for FOMO leaderboard data.</div></div><p class="small">These are FOMO leaderboard filters, not independently chain-verified trader performance. No trader is treated as a whale signal until the evidence is validated.</p></div>
   <div class="card" style="margin:12px 0"><div class="eyebrow">YOUR TELEGRAM BOT</div><h3 style="font-size:14px;margin:6px 0">Get callout alerts on your phone</h3><p class="small">Create a bot with Telegram's @BotFather, paste its token here, then open your bot and press Start. Your token is encrypted for your account and is never shown again.</p><div class="field"><label>Your Telegram bot token</label><input id="calloutTelegramToken" type="password" autocomplete="off" placeholder="Paste your own bot token"></div><div class="actions"><button class="btn" id="saveCalloutTelegram" type="button">Save bot token</button><button class="btn" id="discoverCalloutTelegram" type="button">Find my chat</button><button class="btn" id="testCalloutTelegram" type="button">Test connection</button><button class="btn primary" id="sendCalloutTelegram" type="button">Send top callouts</button></div><div id="calloutTelegramStatus" class="small" style="margin-top:8px">Telegram is optional. Connect your own bot to receive alerts.</div></div>
   <div class="actions" style="margin-bottom:12px">
    <button class="btn primary" id="generateFomoPairing" type="button">Generate pairing code</button><button class="btn" id="refreshFomo" type="button">Refresh local FOMO data</button>
@@ -220,10 +219,6 @@ td{color:#dce7ed}
     <p class="small">Public Copy.top feed: FOMO leaderboard, recent trades from those FOMO handles, hot-coin aggregates, confluence and big-trade alerts. Hot-coin aggregates may include other platforms unless labeled FOMO. Optional local bridge: your spot swap history, clan leaderboards, and passively captured individual trader leaderboard JSON (24h, 7d, 30d). Only locally qualified traders are polled for recent spot swaps. Those buys are context, not independently chain-verified proof.</p>
     <p class="small">SignalForce stores only account-scoped sanitized snapshots. The bridge never clicks trade buttons, submits orders, signs transactions, or accesses wallet private keys.</p>
    </div>
-  </div>
-  <div class="card" style="margin-top:12px">
-   <div class="head"><div><div class="eyebrow">LATEST IMPORTS</div><h2>FOMO snapshots</h2><p>Source and observation time are shown for every snapshot.</p></div></div>
-   <div id="fomoSnapshotList"><div class="empty">No FOMO data imported yet. Install and activate the local browser bridge.</div></div>
   </div>
  </section>
 </div>
@@ -427,44 +422,16 @@ setInterval(()=>{
 },30000);
 
 async function loadFomoCopilot(){
- const status=$("fomoConnectionStatus"),host=$("fomoSnapshotList");
+ const status=$("fomoConnectionStatus");
  try{
   const data=await request("/v1/customer/fomo-copilot");
   status.textContent=data.connected
    ?"CONNECTED · "+data.snapshot_count+" FOMO feeds received · "+(data.bridge_paired?"local bridge paired":"bridge key not paired")+" · Read-only / manual execution"
    :(data.bridge_paired?"LOCAL BRIDGE PAIRED · Waiting for your first private FOMO snapshot.":"LOCAL BRIDGE NOT CONNECTED · Public Copy.top intelligence below is still available.");
   status.classList.toggle("error",false);
-  const snapshots=data.snapshots||[];
   loadFomoCallouts().catch(()=>{});
   loadCopytopFeed().catch(()=>{});
   loadXCallouts().catch(()=>{});
-  host.innerHTML=snapshots.length?snapshots.map(snapshot=>{
-   const payload=snapshot.payload||{};
-   const rows=payload.swaps||payload.clans||payload.traders||[];
-   const label=snapshot.snapshot_type.replaceAll("_"," ").toUpperCase();
-   const preview=rows.slice(0,5).map(row=>{
-    if(snapshot.snapshot_type==="spot_swaps"){
-     const display=row.display||{};
-     const side=typeof display==="object"?(display.side||"SWAP"):(display||"SWAP");
-     const amount=row.humanUsdAmountIn||row.humanUsdAmountOut||"—";
-     return '<div class="launch-card"><div><strong>'+esc(side)+' · '+esc(amount)+'</strong><small>'+esc(row.provider||"FOMO")+' · '+esc(row.createdAt||"Time unavailable")+'</small><small class="mono">'+esc(row.inTokenAddress||"")+' → '+esc(row.outTokenAddress||"")+'</small></div></div>';
-    }
-    if(snapshot.snapshot_type.startsWith("trader_leaderboard")){
-     const user=row.user||{},stats=row.stats||{};
-     const name=user.userHandle||user.displayName||row.userHandle||row.displayName||"FOMO trader";
-     const pnl=row.pnl??row.pnlUsd??stats.pnl??stats.pnlUsd??"—";
-     const winRate=row.winRate??stats.winRate??"—";
-     const trades=row.totalTrades??row.numTrades??stats.totalTrades??stats.numTrades??"—";
-     return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(name)+'</strong><small>Reported P&L '+esc(pnl)+' · Reported win rate '+esc(winRate)+' · Trades '+esc(trades)+'</small><small class="small">Captured from FOMO leaderboard. Missing evidence fails qualification; not chain-verified.</small></div></div>';
-    }
-    if(snapshot.snapshot_type==="trader_spot_swaps"){
-     const swaps=row.swaps||[];
-     return '<div class="launch-card"><div><strong>'+esc(row.handle||row.user_id||"Qualified trader")+'</strong><small>'+swaps.length+' recent spot swaps captured · '+esc(row.observed_at||"Time unavailable")+'</small><small class="small">Read-only FOMO activity; not independently chain-verified.</small></div></div>';
-    }
-    return '<div class="launch-card"><div><strong>#'+esc(row.rank??"—")+' · '+esc(row.name||"Unnamed clan")+'</strong><small>Members '+esc(row.memberCount??"—")+' · P&L '+esc(row.pnl??"—")+'</small></div></div>';
-   }).join("");
-   return '<div style="padding:12px 0;border-bottom:1px solid #263541"><div class="head"><div><strong>'+esc(label)+'</strong><p class="small">Observed '+esc(fomoStamp(snapshot.observed_at))+' · '+rows.length+' records · '+esc(snapshot.source)+'</p></div></div><div class="launch-grid">'+(preview||'<div class="empty">No records in this snapshot.</div>')+'</div></div>';
-  }).join(""):'<div class="empty">No FOMO data imported yet. Install and activate the local browser bridge.</div>';
  }catch(error){status.textContent="FOMO Copilot unavailable: "+error.message;status.classList.add("error");}
 }
 $("generateFomoPairing").onclick=async()=>{
