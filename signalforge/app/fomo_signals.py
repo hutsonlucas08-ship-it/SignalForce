@@ -38,7 +38,7 @@ def _num(value):
     return None
 
 
-def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
+def build_callouts(assets, pairs, *, now=None, max_age_seconds=900):
     now = now or datetime.now(timezone.utc)
     by_mint = {}
     for pair in pairs:
@@ -84,10 +84,10 @@ def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
         if price is None or price <= 0:
             rejected["missing_market_data"] += 1
             continue
-        if liquidity < 25000:
+        if liquidity < 8000:
             rejected["low_liquidity"] += 1
             continue
-        if volume_1h < 10000:
+        if volume_1h < 2000:
             rejected["low_volume"] += 1
             continue
         if sells_5m >= max(12, buys_5m * 2) and change_5m is not None and change_5m <= -8:
@@ -104,7 +104,7 @@ def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
             reasons.append("liquidity at least $50k")
         else:
             score += 5
-            reasons.append("liquidity at least $25k")
+            reasons.append("liquidity at least $8k")
         if buys_5m + sells_5m:
             buy_ratio = buys_5m / (buys_5m + sells_5m)
             if buy_ratio >= .65:
@@ -158,7 +158,7 @@ def build_callouts(assets, pairs, *, now=None, max_age_seconds=300):
         })
     callouts.sort(key=lambda item: (item["score"], item["liquidity_usd"]), reverse=True)
     return {
-        "callouts": callouts[:25],
+        "callouts": callouts[:10],
         "scanned_assets": len(assets),
         "matched_market_pairs": len(by_mint),
         "rejected": rejected,
