@@ -299,6 +299,12 @@ async function loadXCallouts(){
  }finally{if(button){button.dataset.loading="0";button.disabled=false;}}
 }
 $("refreshXCallouts").onclick=loadXCallouts;
+// Keep the X callout panel current without requiring manual refreshes.
+// J7Tracker pushes into the backend over Socket.IO; this poll mirrors newly
+// received events into the open customer page every 3 seconds.
+setInterval(()=>{
+ if(!$("workspace").classList.contains("hidden")&&!$("xCalloutsCard").classList.contains("hidden"))loadXCallouts().catch(()=>{});
+},3000);
 
 $("syncXWatchlist").onclick=async()=>{
  const button=$("syncXWatchlist"),status=$("xCalloutStatus");
