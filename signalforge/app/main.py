@@ -25,7 +25,7 @@ from . import customer_auth, customer_data, customer_integrations
 from .security import CredentialEncryptionError
 from .risk import RiskSnapshot, assess_risk
 from .research import analyze_asset, build_brain_report, scan_assets
-from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed
+from . import paper, paper_bot, customer_paper_bot, telegram_alerts, fomo_copilot, fomo_signals, whale_selection, copytop_feed, launch_feed
 from .sources.helius_worker import run_helius_sync
 
 log = logging.getLogger("signalforge")
@@ -1207,102 +1207,157 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/v1/research/new-launches")
     async def research_new_launches():
-        """Return the newest Solana pools and token artwork from public GeckoTerminal data."""
+        """Return fresh Solana pools, falling back to DexScreener token profiles."""
         now = time.time()
         cached = _launch_cache.get("solana")
         if cached and now - cached[0] < 45:
             return cached[1]
-        if now < _launch_retry_after.get("solana", 0):
-            if cached:
-                stale = dict(cached[1])
-                stale["stale"] = True
-                stale["note"] = "Showing cached launch data while GeckoTerminal recovers."
-                return stale
-            return {"launches": [], "count": 0, "source": "fallback", "stale": True,
-                    "note": "GeckoTerminal is temporarily unavailable; wallet and market discovery continue."}
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                response = await client.get(
-                    "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
-                    params={"include": "base_token,quote_token,dex", "page": 1},
-                    headers={"Accept": "application/json"},
-                )
-                response.raise_for_status()
-                payload = response.json()
-            included = {
-                item.get("id"): item.get("attributes") or {}
-                for item in (payload.get("included") or [])
-                if isinstance(item, dict) and item.get("type") == "token"
-            }
-            launches = []
-            for pool in payload.get("data") or []:
-                if not isinstance(pool, dict):
-                    continue
-                attrs = pool.get("attributes") or {}
-                relationships = pool.get("relationships") or {}
-                base_ref = ((relationships.get("base_token") or {}).get("data") or {})
-                quote_ref = ((relationships.get("quote_token") or {}).get("data") or {})
-                base_token = included.get(base_ref.get("id"), {})
-                quote_token = included.get(quote_ref.get("id"), {})
+
+        gecko_error = None
+        if now >= _launch_retry_after.get("solana", 0):
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    response = await client.get(
+                        "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
+                        params={"include": "base_token,quote_token,dex", "page": 1},
+                        headers={"Accept": "application/json"},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                included = {
+                    item.get("id"): item.get("attributes") or {}
+                    for item in (payload.get("included") or [])
+                    if isinstance(item, dict) and item.get("type") == "token"
+                }
+                launches = []
                 quote_like_addresses = {
                     "So11111111111111111111111111111111111111112",
                     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
                 }
-                token = quote_token if base_token.get("address") in quote_like_addresses else base_token
-                address = token.get("address")
-                if not isinstance(address, str) or not address:
-                    continue
-                image = token.get("image_url")
-                if not isinstance(image, str) or not image.startswith("https://"):
-                    image = None
-                dex_ref = ((relationships.get("dex") or {}).get("data") or {})
-                pool_id = pool.get("id") or ""
-                launches.append({
-                    "asset_id": address,
-                    "name": token.get("name") or address[:8],
-                    "symbol": token.get("symbol") or "",
-                    "image_url": image,
-                    "pool_address": pool_id.split("_", 1)[-1],
-                    "pool_created_at": attrs.get("pool_created_at"),
-                    "price_usd": attrs.get("base_token_price_usd"),
-                    "liquidity_usd": attrs.get("reserve_in_usd"),
-                    "volume_24h_usd": (attrs.get("volume_usd") or {}).get("h24"),
-                    "dex": dex_ref.get("id"),
-                    "source": "GeckoTerminal",
-                })
-            result = {
-                "launches": launches[:10],
-                "count": len(launches[:10]),
-                "source": "GeckoTerminal public Solana new-pools feed",
-                "note": "New pool creation is a discovery signal, not proof of a legitimate launch or a safe token. Artwork is provider-supplied and may be unavailable.",
-            }
-            _launch_cache["solana"] = (now, result)
-            _launch_retry_after["solana"] = 0
-            return result
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            retry_after = 300 if status == 429 else 90 if status >= 500 else 180
-            _launch_retry_after["solana"] = now + retry_after
-            log.warning("GeckoTerminal new-pools feed unavailable (HTTP %s); retrying in %ss", status, retry_after)
-            if cached:
-                stale = dict(cached[1])
-                stale["stale"] = True
-                stale["note"] = "Showing cached launch data while GeckoTerminal recovers."
-                return stale
-            return {"launches": [], "count": 0, "source": "fallback", "stale": True,
-                    "note": "GeckoTerminal is temporarily unavailable; wallet and market discovery continue."}
-        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
-            _launch_retry_after["solana"] = now + 120
-            log.warning("GeckoTerminal new-pools feed unavailable (%s); retrying in 120s",
-                        type(exc).__name__)
-            if cached:
-                stale = dict(cached[1])
-                stale["stale"] = True
-                stale["note"] = "Showing cached launch data while GeckoTerminal recovers."
-                return stale
-            return {"launches": [], "count": 0, "source": "fallback", "stale": True,
-                    "note": "GeckoTerminal is temporarily unavailable; wallet and market discovery continue."}
+                for pool in payload.get("data") or []:
+                    if not isinstance(pool, dict):
+                        continue
+                    attrs = pool.get("attributes") or {}
+                    relationships = pool.get("relationships") or {}
+                    base_ref = ((relationships.get("base_token") or {}).get("data") or {})
+                    quote_ref = ((relationships.get("quote_token") or {}).get("data") or {})
+                    base_token = included.get(base_ref.get("id"), {})
+                    quote_token = included.get(quote_ref.get("id"), {})
+                    token = quote_token if base_token.get("address") in quote_like_addresses else base_token
+                    address = token.get("address")
+                    if not isinstance(address, str) or not address:
+                        continue
+                    image = token.get("image_url")
+                    if not isinstance(image, str) or not image.startswith("https://"):
+                        image = None
+                    dex_ref = ((relationships.get("dex") or {}).get("data") or {})
+                    pool_id = pool.get("id") or ""
+                    launches.append({
+                        "asset_id": address,
+                        "name": token.get("name") or address[:8],
+                        "symbol": token.get("symbol") or "",
+                        "image_url": image,
+                        "pool_address": pool_id.split("_", 1)[-1],
+                        "pool_created_at": attrs.get("pool_created_at"),
+                        "price_usd": attrs.get("base_token_price_usd"),
+                        "liquidity_usd": attrs.get("reserve_in_usd"),
+                        "volume_24h_usd": (attrs.get("volume_usd") or {}).get("h24"),
+                        "dex": dex_ref.get("id"),
+                        "source": "GeckoTerminal",
+                    })
+                if launches:
+                    result = {
+                        "launches": launches[:10],
+                        "count": len(launches[:10]),
+                        "source": "GeckoTerminal public Solana new-pools feed",
+                        "stale": False,
+                        "note": "Newest pools first. New pool creation is not proof of legitimacy or safety.",
+                    }
+                    _launch_cache["solana"] = (now, result)
+                    _launch_retry_after["solana"] = 0
+                    return result
+                gecko_error = "GeckoTerminal returned no new pools"
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                retry_after = 300 if status == 429 else 90 if status >= 500 else 180
+                _launch_retry_after["solana"] = now + retry_after
+                gecko_error = "GeckoTerminal HTTP " + str(status)
+                log.warning(
+                    "GeckoTerminal new-pools feed unavailable (HTTP %s); retrying in %ss",
+                    status, retry_after,
+                )
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+                _launch_retry_after["solana"] = now + 120
+                gecko_error = "GeckoTerminal " + type(exc).__name__
+                log.warning(
+                    "GeckoTerminal new-pools feed unavailable (%s); retrying in 120s",
+                    type(exc).__name__,
+                )
+        else:
+            gecko_error = "GeckoTerminal is cooling down after a rate limit or provider error"
+
+        # DexScreener is a secondary discovery source. Its latest token-profile
+        # list can include promoted or older tokens, so the UI labels it clearly.
+        if now >= _launch_retry_after.get("solana_dex", 0):
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    profile_response = await client.get(
+                        "https://api.dexscreener.com/token-profiles/latest/v1",
+                        headers={"Accept": "application/json"},
+                    )
+                    profile_response.raise_for_status()
+                    profiles = profile_response.json()
+                    if not isinstance(profiles, list):
+                        raise ValueError("DexScreener profile response was not a list")
+                    addresses = [
+                        item.get("tokenAddress")
+                        for item in profiles
+                        if isinstance(item, dict)
+                        and str(item.get("chainId") or "").lower() == "solana"
+                        and isinstance(item.get("tokenAddress"), str)
+                    ][:30]
+                    pairs = []
+                    if addresses:
+                        pair_response = await client.get(
+                            "https://api.dexscreener.com/tokens/v1/solana/"
+                            + ",".join(addresses),
+                            headers={"Accept": "application/json"},
+                        )
+                        pair_response.raise_for_status()
+                        pair_payload = pair_response.json()
+                        if isinstance(pair_payload, list):
+                            pairs = pair_payload
+                launches = launch_feed.normalize_dexscreener_latest(profiles, pairs, limit=10)
+                if launches:
+                    result = {
+                        "launches": launches,
+                        "count": len(launches),
+                        "source": "DexScreener latest token profiles (fallback; not necessarily brand-new pools)",
+                        "stale": False,
+                        "note": "GeckoTerminal is unavailable. This backup feed shows recently listed or promoted Solana tokens and may include older pools; verify pool age and token details.",
+                    }
+                    _launch_cache["solana"] = (now, result)
+                    _launch_retry_after["solana_dex"] = 0
+                    return result
+                raise ValueError("DexScreener returned no Solana token profiles")
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+                _launch_retry_after["solana_dex"] = now + 90
+                log.warning("DexScreener latest-token fallback unavailable (%s)", type(exc).__name__)
+
+        if cached:
+            stale = dict(cached[1])
+            stale["stale"] = True
+            stale["note"] = "Showing the last successful launch list while public feeds recover."
+            return stale
+        return {
+            "launches": [],
+            "count": 0,
+            "source": "public feeds temporarily unavailable",
+            "stale": True,
+            "note": "GeckoTerminal and the DexScreener backup are temporarily unavailable. The feed will retry automatically.",
+            "provider_status": gecko_error or "unavailable",
+        }
 
     @app.get("/v1/research/trending-now")
     async def trending_now(_: Principal = Depends(require_read), conn=Depends(get_conn)):
