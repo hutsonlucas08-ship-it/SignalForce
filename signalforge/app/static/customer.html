@@ -234,7 +234,8 @@ async function loadFomoCallouts(){
  try{
   const data=await request("/v1/customer/fomo-copilot/callouts?limit=50");
   const rows=data.callouts||[];
-  const scanned=Number(data.scanned_assets||0);\n  status.textContent=(scanned===0?"SCAN INPUT EMPTY · ":"SCAN COMPLETE · ")+rows.length+" candidates · "+scanned+" assets evaluated · "+(data.gecko_terminal_new_pools_seen||0)+" new pools seen · "+data.source+" · "+fomoStamp(data.generated_at);
+  const scanned=Number(data.scanned_assets||0);
+  status.textContent=(scanned===0?"SCAN INPUT EMPTY · ":"SCAN COMPLETE · ")+rows.length+" candidates · "+scanned+" assets evaluated · "+(data.gecko_terminal_new_pools_seen||0)+" new pools seen · "+data.source+" · "+fomoStamp(data.generated_at);
   status.classList.remove("error");
   host.innerHTML=rows.length?rows.map(x=>{
    const change=x.change_5m_pct===null?"n/a":Number(x.change_5m_pct).toFixed(1)+"%";
