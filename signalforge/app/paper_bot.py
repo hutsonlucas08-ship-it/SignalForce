@@ -482,6 +482,12 @@ async def run_paper_bot(db_path: str, stop_event: asyncio.Event):
     conn = connect(db_path)
     try:
         _state(conn)
+        global _TELEGRAM_CONFIG_WARNING_LOGGED
+        if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
+            log.info("Telegram paper alerts are configured.")
+        else:
+            log.warning("Telegram paper alerts are disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set in Render.")
+            _TELEGRAM_CONFIG_WARNING_LOGGED = True
         _set_status(conn, started_at=utcnow())
         async with httpx.AsyncClient(timeout=8.0, headers={"Accept":"application/json"}) as client:
             while not stop_event.is_set():
